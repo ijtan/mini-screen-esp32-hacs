@@ -10,6 +10,7 @@ from homeassistant.components.notify import NotifyEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from . import CONF_IP_ADDRESS, CONF_NAME, DOMAIN, STYLE_ENDPOINTS
@@ -37,6 +38,12 @@ class MiniScreenNotifyEntity(NotifyEntity):
         self._ip_address = ip_address
         self._attr_name = name
         self._attr_unique_id = f"{entry_id}_notify"
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, entry_id)},
+            name=name,
+            manufacturer="ESP8266",
+            model="Mini Screen OLED",
+        )
 
     async def async_send_message(
         self, message: str, title: str | None = None, **kwargs: Any
