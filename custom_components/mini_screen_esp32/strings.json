@@ -1,0 +1,42 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Set up Mini Screen ESP32",
+        "description": "Enter the details for your Mini Screen ESP32 device. The integration will verify that the device is reachable before saving.",
+        "data": {
+          "name": "Device Name",
+          "ip_address": "IP Address"
+        },
+        "data_description": {
+          "name": "A friendly name for this device (e.g. \"Mini Screen\").",
+          "ip_address": "The local IP address of the ESP device (e.g. 192.168.1.50)."
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Unable to reach the device at that IP address. Make sure the device is powered on and connected to your network, then try again.",
+      "already_configured": "A Mini Screen ESP32 device with this IP address is already configured."
+    },
+    "abort": {
+      "already_configured": "This device is already configured."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Update Mini Screen ESP32 IP Address",
+        "description": "Change the IP address of this Mini Screen ESP32 device. The integration will verify the new address before saving.",
+        "data": {
+          "ip_address": "IP Address"
+        },
+        "data_description": {
+          "ip_address": "The new local IP address of the ESP device (e.g. 192.168.1.50)."
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Unable to reach the device at the new IP address. Make sure the address is correct and the device is online."
+    }
+  }
+}

@@ -1,0 +1,107 @@
+send_message:
+  name: Send Message
+  description: >-
+    Send a message to one or all configured Mini Screen ESP32 devices.
+  fields:
+    message:
+      name: Message
+      description: The text to display on the screen.
+      required: true
+      example: "Hello, World!"
+      selector:
+        text:
+          multiline: true
+
+    style:
+      name: Style
+      description: >-
+        Display style. "Updateable" is non-blocking and logs the message to
+        the device history; all other styles block for the display duration.
+      required: false
+      default: "normal"
+      example: "big"
+      selector:
+        select:
+          options:
+            - value: "normal"
+              label: "Normal (small font)"
+            - value: "big"
+              label: "Big (large font)"
+            - value: "important"
+              label: "Important (flashes 15×)"
+            - value: "critical"
+              label: "Critical (flashes 25×)"
+            - value: "inverted"
+              label: "Inverted (small font, inverted)"
+            - value: "inverted_big"
+              label: "Inverted Big (large font, inverted)"
+            - value: "updateable"
+              label: "Updateable (non-blocking, logs to history)"
+
+    font_size:
+      name: Font Size
+      description: >-
+        Font size to use. Only applies when style is "updateable".
+        1 = 10 px, 2 = 16 px, 3 = 24 px.
+      required: false
+      default: 2
+      example: 2
+      selector:
+        number:
+          min: 1
+          max: 3
+          step: 1
+          mode: box
+
+    duration:
+      name: Duration
+      description: >-
+        How long (in seconds) to display the message. Only applies when style
+        is "updateable".
+      required: false
+      default: 5
+      example: 10
+      selector:
+        number:
+          min: 1
+          max: 300
+          step: 1
+          unit_of_measurement: seconds
+          mode: box
+
+    show:
+      name: Show on Screen
+      description: >-
+        Whether to actually display the message. Set to false to log it to the
+        device history without showing it. Only applies when style is
+        "updateable".
+      required: false
+      default: true
+      selector:
+        boolean:
+
+    device_name:
+      name: Device Name
+      description: >-
+        Name of the specific Mini Screen ESP32 device to target. If omitted,
+        the message is sent to ALL configured devices.
+      required: false
+      example: "Mini Screen"
+      selector:
+        text:
+
+flash:
+  name: Flash Screen
+  description: >-
+    Flash the screen bright 5 times on one or all configured Mini Screen ESP32
+    devices.
+  fields:
+    device_name:
+      name: Device Name
+      description: >-
+        Name of the specific Mini Screen ESP32 device to target. If omitted,
+        all configured devices are flashed.
+      required: false
+      example: "Mini Screen"
+      selector:
+        text:
