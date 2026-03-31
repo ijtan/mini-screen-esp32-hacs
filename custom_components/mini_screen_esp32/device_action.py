@@ -9,36 +9,49 @@ from homeassistant.const import CONF_DEVICE_ID, CONF_DOMAIN, CONF_TYPE
 from homeassistant.core import Context, HomeAssistant
 from homeassistant.helpers import device_registry as dr
 
-from . import DOMAIN, _flash_device, _send_message_to_device
+from . import DOMAIN, STYLE_ENDPOINTS, _build_send_params, _call_device
 
-ACTION_SEND_NORMAL = "send_normal"
-ACTION_SEND_BIG = "send_big"
-ACTION_SEND_IMPORTANT = "send_important"
-ACTION_SEND_CRITICAL = "send_critical"
-ACTION_SEND_INVERTED = "send_inverted"
+# ── Action type constants ─────────────────────────────────────────────────────
+ACTION_SEND_NORMAL      = "send_normal"
+ACTION_SEND_BIG         = "send_big"
+ACTION_SEND_IMPORTANT   = "send_important"
+ACTION_SEND_CRITICAL    = "send_critical"
+ACTION_SEND_INVERTED    = "send_inverted"
 ACTION_SEND_INVERTED_BIG = "send_inverted_big"
-ACTION_SEND_UPDATEABLE = "send_updateable"
-ACTION_FLASH = "flash"
+ACTION_SEND_UPDATEABLE  = "send_updateable"
+ACTION_FLASH            = "flash"
+ACTION_CLEAR            = "clear"
+ACTION_UNPIN            = "unpin"
+ACTION_SET_BRIGHTNESS   = "set_brightness"
+ACTION_PIN_MESSAGE      = "pin_message"
+ACTION_SCROLL_MESSAGE   = "scroll_message"
+ACTION_SHOW_PROGRESS    = "show_progress"
 
 _STYLE_MAP = {
-    ACTION_SEND_NORMAL: "normal",
-    ACTION_SEND_BIG: "big",
-    ACTION_SEND_IMPORTANT: "important",
-    ACTION_SEND_CRITICAL: "critical",
-    ACTION_SEND_INVERTED: "inverted",
+    ACTION_SEND_NORMAL:      "normal",
+    ACTION_SEND_BIG:         "big",
+    ACTION_SEND_IMPORTANT:   "important",
+    ACTION_SEND_CRITICAL:    "critical",
+    ACTION_SEND_INVERTED:    "inverted",
     ACTION_SEND_INVERTED_BIG: "inverted_big",
-    ACTION_SEND_UPDATEABLE: "updateable",
+    ACTION_SEND_UPDATEABLE:  "updateable",
 }
 
-_ALL_ACTIONS = [
-    (ACTION_SEND_NORMAL,      "Send normal message"),
-    (ACTION_SEND_BIG,         "Send big message"),
-    (ACTION_SEND_IMPORTANT,   "Send important message (flashes 15×)"),
-    (ACTION_SEND_CRITICAL,    "Send critical message (flashes 25×)"),
-    (ACTION_SEND_INVERTED,    "Send inverted message"),
-    (ACTION_SEND_INVERTED_BIG,"Send inverted big message"),
-    (ACTION_SEND_UPDATEABLE,  "Send updateable message"),
-    (ACTION_FLASH,            "Flash screen"),
+_ALL_ACTIONS: list[tuple[str, str]] = [
+    (ACTION_SEND_NORMAL,       "Send normal message"),
+    (ACTION_SEND_BIG,          "Send big message"),
+    (ACTION_SEND_IMPORTANT,    "Send important message (flashes 15×)"),
+    (ACTION_SEND_CRITICAL,     "Send critical message (flashes 25×)"),
+    (ACTION_SEND_INVERTED,     "Send inverted message"),
+    (ACTION_SEND_INVERTED_BIG, "Send inverted big message"),
+    (ACTION_SEND_UPDATEABLE,   "Send updateable message"),
+    (ACTION_FLASH,             "Flash screen"),
+    (ACTION_CLEAR,             "Clear display"),
+    (ACTION_UNPIN,             "Unpin display"),
+    (ACTION_SET_BRIGHTNESS,    "Set brightness"),
+    (ACTION_PIN_MESSAGE,       "Pin message"),
+    (ACTION_SCROLL_MESSAGE,    "Scroll message"),
+    (ACTION_SHOW_PROGRESS,     "Show progress bar"),
 ]
 
 ACTION_SCHEMA = vol.Schema(
@@ -50,6 +63,9 @@ ACTION_SCHEMA = vol.Schema(
         vol.Optional("font_size", default=2): vol.All(int, vol.Range(min=1, max=3)),
         vol.Optional("duration", default=5): vol.All(int, vol.Range(min=1, max=300)),
         vol.Optional("show", default=True): bool,
+        vol.Optional("level", default=128): vol.All(int, vol.Range(min=0, max=255)),
+        vol.Optional("value", default=0): vol.All(int, vol.Range(min=0, max=100)),
+        vol.Optional("label", default=""): str,
     }
 )
 
@@ -70,19 +86,42 @@ async def async_get_action_capabilities(
     """Return extra fields shown in the automation editor for each action type."""
     action_type = config[CONF_TYPE]
 
-    if action_type == ACTION_FLASH:
+    # Actions with no extra fields
+    if action_type in (ACTION_FLASH, ACTION_CLEAR, ACTION_UNPIN):
         return {}
 
-    fields: dict = {vol.Required("message"): str}
+    fields: dict = {}
 
-    if action_type == ACTION_SEND_UPDATEABLE:
+    if action_type in _STYLE_MAP:
+        # All send_* actions require a message
+        fields[vol.Required("message")] = str
+        if action_type == ACTION_SEND_UPDATEABLE:
+            fields[vol.Optional("font_size", default=2)] = vol.All(
+                int, vol.Range(min=1, max=3)
+            )
+            fields[vol.Optional("duration", default=5)] = vol.All(
+                int, vol.Range(min=1, max=300)
+            )
+            fields[vol.Optional("show", default=True)] = bool
+
+    elif action_type == ACTION_SET_BRIGHTNESS:
+        fields[vol.Required("level")] = vol.All(int, vol.Range(min=0, max=255))
+
+    elif action_type == ACTION_PIN_MESSAGE:
+        fields[vol.Required("message")] = str
         fields[vol.Optional("font_size", default=2)] = vol.All(
             int, vol.Range(min=1, max=3)
         )
-        fields[vol.Optional("duration", default=5)] = vol.All(
-            int, vol.Range(min=1, max=300)
+
+    elif action_type == ACTION_SCROLL_MESSAGE:
+        fields[vol.Required("message")] = str
+        fields[vol.Optional("font_size", default=2)] = vol.All(
+            int, vol.Range(min=1, max=3)
         )
-        fields[vol.Optional("show", default=True)] = bool
+
+    elif action_type == ACTION_SHOW_PROGRESS:
+        fields[vol.Required("value")] = vol.All(int, vol.Range(min=0, max=100))
+        fields[vol.Optional("label", default="")] = str
 
     return {"extra_fields": vol.Schema(fields)}
 
@@ -98,23 +137,86 @@ async def async_call_action_from_config(
     if entry_data is None:
         return
 
-    ip_address: str = entry_data["ip_address"]
+    ip: str = entry_data["ip_address"]
     action_type: str = config[CONF_TYPE]
 
+    # ── No-extra-field actions ────────────────────────────────────────────────
     if action_type == ACTION_FLASH:
-        hass.async_create_task(_flash_device(ip_address))
+        hass.async_create_task(_call_device(ip=ip, path="/flashScreenBright5"))
         return
 
-    hass.async_create_task(
-        _send_message_to_device(
-            ip_address=ip_address,
+    if action_type == ACTION_CLEAR:
+        hass.async_create_task(_call_device(ip=ip, path="/clear"))
+        return
+
+    if action_type == ACTION_UNPIN:
+        hass.async_create_task(_call_device(ip=ip, path="/unpin"))
+        return
+
+    # ── Send-message family ───────────────────────────────────────────────────
+    if action_type in _STYLE_MAP:
+        style = _STYLE_MAP[action_type]
+        params = _build_send_params(
             message=config.get("message", ""),
-            style=_STYLE_MAP[action_type],
+            style=style,
             font_size=config.get("font_size", 2),
             duration=config.get("duration", 5),
             show=config.get("show", True),
         )
-    )
+        hass.async_create_task(
+            _call_device(ip=ip, path=STYLE_ENDPOINTS.get(style, "/update"), params=params)
+        )
+        return
+
+    # ── New actions ───────────────────────────────────────────────────────────
+    if action_type == ACTION_SET_BRIGHTNESS:
+        hass.async_create_task(
+            _call_device(
+                ip=ip,
+                path="/setBrightness",
+                params={"level": config.get("level", 128)},
+            )
+        )
+        return
+
+    if action_type == ACTION_PIN_MESSAGE:
+        hass.async_create_task(
+            _call_device(
+                ip=ip,
+                path="/pin",
+                params={
+                    "message": config.get("message", ""),
+                    "font_size": config.get("font_size", 2),
+                },
+            )
+        )
+        return
+
+    if action_type == ACTION_SCROLL_MESSAGE:
+        hass.async_create_task(
+            _call_device(
+                ip=ip,
+                path="/scroll",
+                params={
+                    "message": config.get("message", ""),
+                    "font_size": config.get("font_size", 2),
+                },
+            )
+        )
+        return
+
+    if action_type == ACTION_SHOW_PROGRESS:
+        hass.async_create_task(
+            _call_device(
+                ip=ip,
+                path="/showProgress",
+                params={
+                    "value": config.get("value", 0),
+                    "label": config.get("label", ""),
+                },
+            )
+        )
+        return
 
 
 def _get_entry_data_for_device(

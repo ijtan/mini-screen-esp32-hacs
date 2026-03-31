@@ -105,3 +105,301 @@ flash:
       example: "Mini Screen"
       selector:
         text:
+
+clear:
+  name: Clear Display
+  description: >-
+    Clear the display and cancel any pinned message, progress bar, or scrolling
+    text on one or all configured Mini Screen ESP32 devices.
+  fields:
+    device_name:
+      name: Device Name
+      description: >-
+        Name of the specific Mini Screen ESP32 device to target. If omitted,
+        all configured devices are cleared.
+      required: false
+      example: "Mini Screen"
+      selector:
+        text:
+
+unpin:
+  name: Unpin Display
+  description: >-
+    Unpin the current pinned message and return to the default clock display on
+    one or all configured Mini Screen ESP32 devices.
+  fields:
+    device_name:
+      name: Device Name
+      description: >-
+        Name of the specific Mini Screen ESP32 device to target. If omitted,
+        all configured devices are unpinned.
+      required: false
+      example: "Mini Screen"
+      selector:
+        text:
+
+set_brightness:
+  name: Set Brightness
+  description: >-
+    Set the OLED display brightness on one or all configured Mini Screen ESP32
+    devices.
+  fields:
+    level:
+      name: Brightness Level
+      description: Brightness value from 0 (off) to 255 (maximum).
+      required: true
+      example: 128
+      selector:
+        number:
+          min: 0
+          max: 255
+          step: 1
+          mode: slider
+
+    device_name:
+      name: Device Name
+      description: >-
+        Name of the specific Mini Screen ESP32 device to target. If omitted,
+        all configured devices are updated.
+      required: false
+      example: "Mini Screen"
+      selector:
+        text:
+
+pin_message:
+  name: Pin Message
+  description: >-
+    Pin a static message to the display. The clock will not be shown while a
+    message is pinned.
+  fields:
+    message:
+      name: Message
+      description: The text to pin on the screen.
+      required: true
+      example: "Do not disturb"
+      selector:
+        text:
+          multiline: true
+
+    font_size:
+      name: Font Size
+      description: "1 = 10 px, 2 = 16 px (default), 3 = 24 px."
+      required: false
+      default: 2
+      example: 2
+      selector:
+        number:
+          min: 1
+          max: 3
+          step: 1
+          mode: box
+
+    device_name:
+      name: Device Name
+      description: >-
+        Name of the specific Mini Screen ESP32 device to target. If omitted,
+        all configured devices are updated.
+      required: false
+      example: "Mini Screen"
+      selector:
+        text:
+
+scroll_message:
+  name: Scroll Message
+  description: >-
+    Scroll a message continuously across the display from right to left.
+  fields:
+    message:
+      name: Message
+      description: The text to scroll across the screen.
+      required: true
+      example: "Breaking news: everything is fine."
+      selector:
+        text:
+          multiline: false
+
+    font_size:
+      name: Font Size
+      description: "1 = 10 px, 2 = 16 px (default), 3 = 24 px."
+      required: false
+      default: 2
+      example: 2
+      selector:
+        number:
+          min: 1
+          max: 3
+          step: 1
+          mode: box
+
+    device_name:
+      name: Device Name
+      description: >-
+        Name of the specific Mini Screen ESP32 device to target. If omitted,
+        all configured devices are updated.
+      required: false
+      example: "Mini Screen"
+      selector:
+        text:
+
+show_progress:
+  name: Show Progress Bar
+  description: >-
+    Display a labelled progress bar on one or all configured Mini Screen ESP32
+    devices.
+  fields:
+    value:
+      name: Value
+      description: Progress percentage (0 – 100).
+      required: true
+      example: 75
+      selector:
+        number:
+          min: 0
+          max: 100
+          step: 1
+          unit_of_measurement: "%"
+          mode: slider
+
+    label:
+      name: Label
+      description: Optional label shown above the progress bar.
+      required: false
+      example: "Downloading"
+      selector:
+        text:
+
+    device_name:
+      name: Device Name
+      description: >-
+        Name of the specific Mini Screen ESP32 device to target. If omitted,
+        all configured devices are updated.
+      required: false
+      example: "Mini Screen"
+      selector:
+        text:
+
+pin_sensor:
+  name: Pin Sensor
+  description: >-
+    Track a Home Assistant entity and pin its formatted value to the display.
+    The display updates automatically whenever the entity state changes.
+  fields:
+    entity_id:
+      name: Entity
+      description: The entity whose state will be tracked and displayed.
+      required: true
+      example: "sensor.living_room_temperature"
+      selector:
+        entity:
+
+    template:
+      name: Template
+      description: >-
+        Display template. Use {{ value }} as a placeholder for the entity's
+        current state. Example: "Temp: {{ value }} °C"
+      required: false
+      default: "{{ value }}"
+      example: "Temp: {{ value }} °C"
+      selector:
+        text:
+
+    font_size:
+      name: Font Size
+      description: "1 = 10 px, 2 = 16 px (default), 3 = 24 px."
+      required: false
+      default: 2
+      example: 2
+      selector:
+        number:
+          min: 1
+          max: 3
+          step: 1
+          mode: box
+
+    device_name:
+      name: Device Name
+      description: >-
+        Name of the specific Mini Screen ESP32 device to target. If omitted,
+        all configured devices are updated.
+      required: false
+      example: "Mini Screen"
+      selector:
+        text:
+
+pin_sensor_progress:
+  name: Pin Sensor as Progress Bar
+  description: >-
+    Track a numeric Home Assistant entity and display its value as a progress
+    bar. The display updates automatically whenever the entity state changes.
+  fields:
+    entity_id:
+      name: Entity
+      description: The numeric entity to track.
+      required: true
+      example: "sensor.battery_level"
+      selector:
+        entity:
+
+    min_value:
+      name: Minimum Value
+      description: >-
+        The entity value that corresponds to 0 % on the progress bar.
+      required: false
+      default: 0
+      example: 0
+      selector:
+        number:
+          min: -1000
+          max: 1000
+          step: 1
+          mode: box
+
+    max_value:
+      name: Maximum Value
+      description: >-
+        The entity value that corresponds to 100 % on the progress bar.
+      required: false
+      default: 100
+      example: 100
+      selector:
+        number:
+          min: -1000
+          max: 1000
+          step: 1
+          mode: box
+
+    label:
+      name: Label
+      description: >-
+        Label shown above the progress bar. Defaults to the entity name derived
+        from the entity_id if not provided.
+      required: false
+      example: "Battery"
+      selector:
+        text:
+
+    device_name:
+      name: Device Name
+      description: >-
+        Name of the specific Mini Screen ESP32 device to target. If omitted,
+        all configured devices are updated.
+      required: false
+      example: "Mini Screen"
+      selector:
+        text:
+
+unpin_sensor:
+  name: Unpin Sensor
+  description: >-
+    Stop tracking the active sensor and unpin the display, returning it to the
+    default clock view.
+  fields:
+    device_name:
+      name: Device Name
+      description: >-
+        Name of the specific Mini Screen ESP32 device to target. If omitted,
+        all configured devices are updated.
+      required: false
+      example: "Mini Screen"
+      selector:
+        text:

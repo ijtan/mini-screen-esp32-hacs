@@ -31,7 +31,13 @@
       "send_inverted": "Display message (small, inverted)",
       "send_inverted_big": "Display message (large, inverted)",
       "send_updateable": "Display message (non-blocking)",
-      "flash": "Flash screen"
+      "flash": "Flash screen",
+      "clear": "Clear display",
+      "unpin": "Unpin display",
+      "set_brightness": "Set brightness",
+      "pin_message": "Pin message",
+      "scroll_message": "Scroll message",
+      "show_progress": "Show progress bar"
     }
   },
   "options": {
