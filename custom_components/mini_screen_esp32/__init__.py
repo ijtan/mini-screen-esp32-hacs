@@ -94,18 +94,17 @@ def _register_services(hass: HomeAssistant) -> None:
             )
             return
 
-        tasks = [
-            _send_message_to_device(
-                ip_address=entry_data["ip_address"],
-                message=message,
-                style=style,
-                font_size=font_size,
-                duration=duration,
-                show=show,
+        for entry_data in entries:
+            hass.async_create_task(
+                _send_message_to_device(
+                    ip_address=entry_data["ip_address"],
+                    message=message,
+                    style=style,
+                    font_size=font_size,
+                    duration=duration,
+                    show=show,
+                )
             )
-            for entry_data in entries
-        ]
-        await asyncio.gather(*tasks)
 
     async def handle_flash(call: ServiceCall) -> None:
         """Handle the flash service call."""
@@ -120,11 +119,8 @@ def _register_services(hass: HomeAssistant) -> None:
             )
             return
 
-        tasks = [
-            _flash_device(ip_address=entry_data["ip_address"])
-            for entry_data in entries
-        ]
-        await asyncio.gather(*tasks)
+        for entry_data in entries:
+            hass.async_create_task(_flash_device(ip_address=entry_data["ip_address"]))
 
     hass.services.async_register(DOMAIN, "send_message", handle_send_message)
     hass.services.async_register(DOMAIN, "flash", handle_flash)
@@ -174,10 +170,10 @@ async def _send_message_to_device(
                         response.status,
                         endpoint,
                     )
+    except asyncio.CancelledError:
+        _LOGGER.debug("Request to Mini Screen ESP32 at %s was cancelled", ip_address)
     except aiohttp.ClientError as err:
-        raise HomeAssistantError(
-            f"Cannot connect to Mini Screen ESP32 at {ip_address}: {err}"
-        ) from err
+        _LOGGER.warning("Cannot connect to Mini Screen ESP32 at %s: %s", ip_address, err)
 
 
 async def _flash_device(ip_address: str) -> None:
@@ -193,7 +189,7 @@ async def _flash_device(ip_address: str) -> None:
                         ip_address,
                         response.status,
                     )
+    except asyncio.CancelledError:
+        _LOGGER.debug("Flash request to Mini Screen ESP32 at %s was cancelled", ip_address)
     except aiohttp.ClientError as err:
-        raise HomeAssistantError(
-            f"Cannot connect to Mini Screen ESP32 at {ip_address}: {err}"
-        ) from err
+        _LOGGER.warning("Cannot connect to Mini Screen ESP32 at %s: %s", ip_address, err)
