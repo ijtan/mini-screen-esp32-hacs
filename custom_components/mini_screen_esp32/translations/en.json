@@ -22,6 +22,18 @@
       "already_configured": "This device is already configured."
     }
   },
+  "device_automation": {
+    "action_type": {
+      "send_normal": "Display message (small)",
+      "send_big": "Display message (large)",
+      "send_important": "Alert — important (flashes 15×)",
+      "send_critical": "Alert — critical (flashes 25×)",
+      "send_inverted": "Display message (small, inverted)",
+      "send_inverted_big": "Display message (large, inverted)",
+      "send_updateable": "Display message (non-blocking)",
+      "flash": "Flash screen"
+    }
+  },
   "options": {
     "step": {
       "init": {
