@@ -87,6 +87,7 @@ ACTION_SCHEMA = vol.Schema(
         vol.Optional("dither", default=True): bool,
         vol.Optional("auto_clear_delay", default=0): vol.All(int, vol.Range(min=0, max=300)),
         vol.Optional("value_font_size", default=1): vol.All(int, vol.Range(min=1, max=2)),
+        vol.Optional("unit", default=""): str,
     }
 )
 
@@ -152,6 +153,7 @@ async def async_get_action_capabilities(
         fields[vol.Optional("max_value", default=100)] = vol.Coerce(float)
         fields[vol.Optional("label", default="")] = str
         fields[vol.Optional("value_text", default="")] = str
+        fields[vol.Optional("unit", default="")] = str
         fields[vol.Optional("auto_clear_delay", default=0)] = vol.All(int, vol.Range(min=0, max=300))
         fields[vol.Optional("value_font_size", default=1)] = vol.All(int, vol.Range(min=1, max=2))
 
@@ -270,6 +272,7 @@ async def async_call_action_from_config(
         max_value: float = float(config.get("max_value", 100))
         raw_label: str = config.get("label", entity_id.split(".")[-1].replace("_", " ").title())
         raw_value_text: str = config.get("value_text", "")
+        unit: str = config.get("unit", "").strip()
         auto_clear_delay: int = int(config.get("auto_clear_delay", 0))
         value_font_size: int = int(config.get("value_font_size", 1))
 
@@ -284,12 +287,16 @@ async def async_call_action_from_config(
             pct = (raw - min_value) / span * 100.0
             return max(0, min(100, int(round(pct))))
 
-        def _build_progress_params(pct: int) -> dict:
+        def _build_progress_params(pct: int, raw_sensor: str) -> dict:
             label = Template(raw_label, hass).async_render(parse_result=False) if raw_label else ""
             params: dict = {"value": pct, "label": label}
             if raw_value_text.strip():
-                vt = Template(raw_value_text, hass).async_render(parse_result=False)
+                vt = Template(raw_value_text, hass).async_render(
+                    variables={"value": raw_sensor}, parse_result=False
+                )
                 params["value_text"] = vt
+            elif unit:
+                params["value_text"] = f"{raw_sensor} {unit}"
             if auto_clear_delay > 0:
                 params["auto_clear_delay"] = auto_clear_delay
             if value_font_size == 2:
@@ -307,7 +314,8 @@ async def async_call_action_from_config(
         if current_state is not None:
             hass.async_create_task(
                 _call_device(ip=ip, path="/showProgress",
-                             params=_build_progress_params(_to_percent(current_state.state)))
+                             params=_build_progress_params(
+                                 _to_percent(current_state.state), current_state.state))
             )
 
         @callback
@@ -317,7 +325,8 @@ async def async_call_action_from_config(
                 return
             hass.async_create_task(
                 _call_device(ip=_entry_data["ip_address"], path="/showProgress",
-                             params=_build_progress_params(_to_percent(new_state.state)))
+                             params=_build_progress_params(
+                                 _to_percent(new_state.state), new_state.state))
             )
 
         entry_data["sensor_unsub"] = async_track_state_change_event(

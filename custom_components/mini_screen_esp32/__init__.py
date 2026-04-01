@@ -532,18 +532,26 @@ def _register_services(hass: HomeAssistant) -> None:
         default_label = entity_id.split(".")[-1].replace("_", " ").title()
         raw_label: str = call.data.get("label", default_label)
         raw_value_text: str | None = call.data.get("value_text")
+        unit: str = call.data.get("unit", "").strip()
         auto_clear_delay: int = int(call.data.get("auto_clear_delay", 0))
         value_font_size: int = int(call.data.get("value_font_size", 1))
 
         def _render_label() -> str:
             return Template(raw_label, hass).async_render(parse_result=False) if raw_label else ""
 
-        def _render_value_text() -> str:
-            if raw_value_text is None:
-                return ""
-            if raw_value_text.strip() == "":
-                return "__hide__"
-            return Template(raw_value_text, hass).async_render(parse_result=False)
+        def _render_value_text(raw_sensor: str) -> str:
+            # Explicit value_text template takes priority; {{ value }} = raw sensor state
+            if raw_value_text is not None:
+                if raw_value_text.strip() == "":
+                    return "__hide__"
+                return Template(raw_value_text, hass).async_render(
+                    variables={"value": raw_sensor}, parse_result=False
+                )
+            # Convenience: unit field → show raw sensor value + unit
+            if unit:
+                return f"{raw_sensor} {unit}"
+            # Default: let firmware show percentage
+            return ""
 
         entries = _get_matching_entries(hass, device_name)
         if not entries:
@@ -572,9 +580,9 @@ def _register_services(hass: HomeAssistant) -> None:
                 existing_unsub()
                 entry_data["sensor_unsub"] = None
 
-            def _build_progress_params(pct: int) -> dict:
+            def _build_progress_params(pct: int, raw_sensor: str) -> dict:
                 params: dict = {"value": pct, "label": _render_label()}
-                vt = _render_value_text()
+                vt = _render_value_text(raw_sensor)
                 if vt:
                     params["value_text"] = vt
                 if auto_clear_delay > 0:
@@ -591,7 +599,7 @@ def _register_services(hass: HomeAssistant) -> None:
                     _call_device(
                         ip=entry_data["ip_address"],
                         path="/showProgress",
-                        params=_build_progress_params(pct),
+                        params=_build_progress_params(pct, current_state.state),
                     )
                 )
 
@@ -609,7 +617,7 @@ def _register_services(hass: HomeAssistant) -> None:
                     _call_device(
                         ip=_entry_data["ip_address"],
                         path="/showProgress",
-                        params=_build_progress_params(pct),
+                        params=_build_progress_params(pct, new_state.state),
                     )
                 )
 

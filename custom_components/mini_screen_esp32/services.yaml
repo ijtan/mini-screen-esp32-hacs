@@ -495,9 +495,22 @@ pin_sensor_progress:
       name: Value text
       description: >-
         Custom text shown below the bar instead of the default percentage.
-        Supports HA templates. Leave empty for default percentage, single space to hide.
+        Supports HA templates — use {{ value }} for the raw sensor value.
+        Leave empty to show the default percentage. Set to a single space " " to hide.
+        Takes priority over the Unit field if both are set.
       required: false
-      example: "{{ states('sensor.temp') }}°C"
+      example: "{{ value }} min"
+      selector:
+        text:
+
+    unit:
+      name: Unit
+      description: >-
+        Unit suffix to display after the raw sensor value (e.g. "min", "°C", "km/h").
+        Shows the raw sensor value instead of the default percentage.
+        Ignored if Value text is set.
+      required: false
+      example: "min"
       selector:
         text:
 
