@@ -47,13 +47,22 @@
   "options": {
     "step": {
       "init": {
-        "title": "Update Mini Screen ESP32 IP Address",
-        "description": "Change the IP address of this Mini Screen ESP32 device. The integration will verify the new address before saving.",
+        "title": "Mini Screen ESP32 Settings",
+        "description": "Update the IP address or configure the auto-dim schedule.",
         "data": {
-          "ip_address": "IP Address"
+          "ip_address": "IP Address",
+          "dim_enabled": "Enable auto-dim schedule",
+          "dim_start": "Dim time (HH:MM)",
+          "dim_end": "Restore time (HH:MM)",
+          "dim_level": "Dim brightness (0–255)",
+          "dim_restore_level": "Restore brightness (0–255)"
         },
         "data_description": {
-          "ip_address": "The new local IP address of the ESP device (e.g. 192.168.1.50)."
+          "ip_address": "The local IP address of the ESP device (e.g. 192.168.1.50).",
+          "dim_start": "Time to dim the display each day, 24-hour format (e.g. 22:00).",
+          "dim_end": "Time to restore full brightness each day, 24-hour format (e.g. 07:00).",
+          "dim_level": "Brightness level during the dim period.",
+          "dim_restore_level": "Brightness level to restore after the dim period."
         }
       }
     },

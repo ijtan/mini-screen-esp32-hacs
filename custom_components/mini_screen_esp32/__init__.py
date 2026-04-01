@@ -20,6 +20,13 @@ PLATFORMS = ["notify", "button"]
 CONF_IP_ADDRESS = "ip_address"
 CONF_NAME = "name"
 
+# Options keys for dim schedule (stored in entry.options)
+CONF_DIM_ENABLED  = "dim_enabled"
+CONF_DIM_START    = "dim_start"
+CONF_DIM_END      = "dim_end"
+CONF_DIM_LEVEL    = "dim_level"
+CONF_DIM_RESTORE  = "dim_restore_level"
+
 # Style -> endpoint mapping
 STYLE_ENDPOINTS: dict[str, str] = {
     "normal": "/update",
@@ -47,6 +54,64 @@ _ALL_SERVICES = [
     "unpin_sensor",
     "send_image",
 ]
+
+
+def _apply_dim_schedule(
+    hass: HomeAssistant,
+    entry_data: dict[str, Any],
+    enabled: bool,
+    start_str: str,
+    end_str: str,
+    dim_level: int,
+    restore_level: int,
+) -> None:
+    """Set up (or cancel) daily dim/restore time listeners for one entry."""
+    # Cancel existing listeners
+    for key in ("dim_unsub_start", "dim_unsub_end"):
+        unsub = entry_data.get(key)
+        if unsub is not None:
+            unsub()
+            entry_data[key] = None
+
+    if not enabled:
+        return
+
+    try:
+        start_h, start_m = (int(x) for x in start_str.split(":"))
+        end_h, end_m = (int(x) for x in end_str.split(":"))
+    except (ValueError, AttributeError):
+        _LOGGER.error(
+            "Mini Screen ESP32: invalid dim schedule time format (expected HH:MM), "
+            "got start=%s end=%s",
+            start_str, end_str,
+        )
+        return
+
+    ip = entry_data["ip_address"]
+
+    @callback
+    def _on_dim_start(_now: Any, _ip: str = ip, _level: int = dim_level) -> None:
+        hass.async_create_task(
+            _call_device(ip=_ip, path="/setBrightness", params={"level": _level})
+        )
+
+    @callback
+    def _on_dim_end(_now: Any, _ip: str = ip, _level: int = restore_level) -> None:
+        hass.async_create_task(
+            _call_device(ip=_ip, path="/setBrightness", params={"level": _level})
+        )
+
+    entry_data["dim_unsub_start"] = async_track_time_change(
+        hass, _on_dim_start, hour=start_h, minute=start_m, second=0
+    )
+    entry_data["dim_unsub_end"] = async_track_time_change(
+        hass, _on_dim_end, hour=end_h, minute=end_m, second=0
+    )
+    _LOGGER.debug(
+        "Mini Screen ESP32 dim schedule applied for %s: dim=%d at %02d:%02d, "
+        "restore=%d at %02d:%02d",
+        ip, dim_level, start_h, start_m, restore_level, end_h, end_m,
+    )
 
 
 async def async_setup(hass: HomeAssistant, config: dict) -> bool:
@@ -77,7 +142,39 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     if not hass.services.has_service(DOMAIN, "send_message"):
         _register_services(hass)
 
+    # Re-apply dim schedule from saved options (survives restarts)
+    opts = entry.options
+    if opts.get(CONF_DIM_ENABLED, False):
+        entry_data = hass.data[DOMAIN][entry.entry_id]
+        _apply_dim_schedule(
+            hass, entry_data,
+            enabled=True,
+            start_str=opts.get(CONF_DIM_START, "22:00"),
+            end_str=opts.get(CONF_DIM_END, "07:00"),
+            dim_level=int(opts.get(CONF_DIM_LEVEL, 5)),
+            restore_level=int(opts.get(CONF_DIM_RESTORE, 255)),
+        )
+
+    # Re-apply dim schedule when options are updated via the UI
+    entry.async_on_unload(entry.add_update_listener(_async_options_updated))
+
     return True
+
+
+async def _async_options_updated(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Called by HA when the options flow saves new settings."""
+    entry_data = hass.data.get(DOMAIN, {}).get(entry.entry_id)
+    if entry_data is None:
+        return
+    opts = entry.options
+    _apply_dim_schedule(
+        hass, entry_data,
+        enabled=opts.get(CONF_DIM_ENABLED, False),
+        start_str=opts.get(CONF_DIM_START, "22:00"),
+        end_str=opts.get(CONF_DIM_END, "07:00"),
+        dim_level=int(opts.get(CONF_DIM_LEVEL, 5)),
+        restore_level=int(opts.get(CONF_DIM_RESTORE, 255)),
+    )
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -304,12 +401,15 @@ def _register_services(hass: HomeAssistant) -> None:
             return
 
         auto_clear_delay: int = int(call.data.get("auto_clear_delay", 0))
+        value_font_size: int = int(call.data.get("value_font_size", 1))
 
         params: dict[str, Any] = {"value": value, "label": label}
         if value_text:
             params["value_text"] = value_text
         if auto_clear_delay > 0:
             params["auto_clear_delay"] = auto_clear_delay
+        if value_font_size == 2:
+            params["value_font_size"] = 2
 
         for entry_data in entries:
             hass.async_create_task(
@@ -417,6 +517,7 @@ def _register_services(hass: HomeAssistant) -> None:
         raw_label: str = call.data.get("label", default_label)
         raw_value_text: str | None = call.data.get("value_text")
         auto_clear_delay: int = int(call.data.get("auto_clear_delay", 0))
+        value_font_size: int = int(call.data.get("value_font_size", 1))
 
         def _render_label() -> str:
             return Template(raw_label, hass).async_render(parse_result=False) if raw_label else ""
@@ -462,6 +563,8 @@ def _register_services(hass: HomeAssistant) -> None:
                     params["value_text"] = vt
                 if auto_clear_delay > 0:
                     params["auto_clear_delay"] = auto_clear_delay
+                if value_font_size == 2:
+                    params["value_font_size"] = 2
                 return params
 
             # Send current state immediately
@@ -604,57 +707,13 @@ def _register_services(hass: HomeAssistant) -> None:
             return
 
         for entry_data in entries:
-            # Cancel existing dim listeners
-            for key in ("dim_unsub_start", "dim_unsub_end"):
-                unsub = entry_data.get(key)
-                if unsub is not None:
-                    unsub()
-                    entry_data[key] = None
-
-            if not enabled:
-                continue
-
-            start_str: str = call.data.get("start_time", "22:00")
-            end_str: str = call.data.get("end_time", "07:00")
-            dim_level: int = int(call.data.get("dim_level", 5))
-            restore_level: int = int(call.data.get("restore_level", 255))
-
-            try:
-                start_h, start_m = (int(x) for x in start_str.split(":"))
-                end_h, end_m = (int(x) for x in end_str.split(":"))
-            except (ValueError, AttributeError):
-                _LOGGER.error(
-                    "set_dim_schedule: invalid time format (expected HH:MM), "
-                    "got start=%s end=%s",
-                    start_str, end_str,
-                )
-                continue
-
-            ip = entry_data["ip_address"]
-
-            @callback
-            def _on_dim_start(_now: Any, _ip: str = ip, _level: int = dim_level) -> None:
-                hass.async_create_task(
-                    _call_device(ip=_ip, path="/setBrightness", params={"level": _level})
-                )
-
-            @callback
-            def _on_dim_end(_now: Any, _ip: str = ip, _level: int = restore_level) -> None:
-                hass.async_create_task(
-                    _call_device(ip=_ip, path="/setBrightness", params={"level": _level})
-                )
-
-            entry_data["dim_unsub_start"] = async_track_time_change(
-                hass, _on_dim_start, hour=start_h, minute=start_m, second=0
-            )
-            entry_data["dim_unsub_end"] = async_track_time_change(
-                hass, _on_dim_end, hour=end_h, minute=end_m, second=0
-            )
-
-            _LOGGER.debug(
-                "Mini Screen ESP32 dim schedule set for %s: dim to %d at %02d:%02d, "
-                "restore to %d at %02d:%02d",
-                ip, dim_level, start_h, start_m, restore_level, end_h, end_m,
+            _apply_dim_schedule(
+                hass, entry_data,
+                enabled=enabled,
+                start_str=call.data.get("start_time", "22:00"),
+                end_str=call.data.get("end_time", "07:00"),
+                dim_level=int(call.data.get("dim_level", 5)),
+                restore_level=int(call.data.get("restore_level", 255)),
             )
 
     # ── Register all services ─────────────────────────────────────────────────

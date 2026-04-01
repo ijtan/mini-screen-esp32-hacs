@@ -414,6 +414,19 @@ pin_sensor:
           unit_of_measurement: seconds
           mode: box
 
+    value_font_size:
+      name: Value Text Font Size
+      description: "Font size for the text shown below the bar. 1 = 10 px (default), 2 = 16 px."
+      required: false
+      default: 1
+      example: 2
+      selector:
+        number:
+          min: 1
+          max: 2
+          step: 1
+          mode: box
+
     device_name:
       name: Device Name
       description: >-
@@ -502,6 +515,19 @@ pin_sensor_progress:
           max: 300
           step: 1
           unit_of_measurement: seconds
+          mode: box
+
+    value_font_size:
+      name: Value Text Font Size
+      description: "Font size for the text shown below the bar. 1 = 10 px (default), 2 = 16 px."
+      required: false
+      default: 1
+      example: 2
+      selector:
+        number:
+          min: 1
+          max: 2
+          step: 1
           mode: box
 
     device_name:

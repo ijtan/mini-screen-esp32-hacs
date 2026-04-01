@@ -86,6 +86,7 @@ ACTION_SCHEMA = vol.Schema(
         vol.Optional("image_url", default=""): str,
         vol.Optional("dither", default=True): bool,
         vol.Optional("auto_clear_delay", default=0): vol.All(int, vol.Range(min=0, max=300)),
+        vol.Optional("value_font_size", default=1): vol.All(int, vol.Range(min=1, max=2)),
     }
 )
 
@@ -143,6 +144,7 @@ async def async_get_action_capabilities(
         fields[vol.Required("value")] = vol.All(int, vol.Range(min=0, max=100))
         fields[vol.Optional("label", default="")] = str
         fields[vol.Optional("auto_clear_delay", default=0)] = vol.All(int, vol.Range(min=0, max=300))
+        fields[vol.Optional("value_font_size", default=1)] = vol.All(int, vol.Range(min=1, max=2))
 
     elif action_type == ACTION_PIN_SENSOR_PROGRESS:
         fields[vol.Required("entity_id")] = str
@@ -151,6 +153,7 @@ async def async_get_action_capabilities(
         fields[vol.Optional("label", default="")] = str
         fields[vol.Optional("value_text", default="")] = str
         fields[vol.Optional("auto_clear_delay", default=0)] = vol.All(int, vol.Range(min=0, max=300))
+        fields[vol.Optional("value_font_size", default=1)] = vol.All(int, vol.Range(min=1, max=2))
 
     elif action_type == ACTION_PIN_SENSOR:
         fields[vol.Required("entity_id")] = str
@@ -253,6 +256,9 @@ async def async_call_action_from_config(
         acd = int(config.get("auto_clear_delay", 0))
         if acd > 0:
             params["auto_clear_delay"] = acd
+        vfs = int(config.get("value_font_size", 1))
+        if vfs == 2:
+            params["value_font_size"] = 2
         hass.async_create_task(_call_device(ip=ip, path="/showProgress", params=params))
         return
 
@@ -265,6 +271,7 @@ async def async_call_action_from_config(
         raw_label: str = config.get("label", entity_id.split(".")[-1].replace("_", " ").title())
         raw_value_text: str = config.get("value_text", "")
         auto_clear_delay: int = int(config.get("auto_clear_delay", 0))
+        value_font_size: int = int(config.get("value_font_size", 1))
 
         def _to_percent(state_value: str) -> int:
             try:
@@ -285,6 +292,8 @@ async def async_call_action_from_config(
                 params["value_text"] = vt
             if auto_clear_delay > 0:
                 params["auto_clear_delay"] = auto_clear_delay
+            if value_font_size == 2:
+                params["value_font_size"] = 2
             return params
 
         # Cancel existing subscription

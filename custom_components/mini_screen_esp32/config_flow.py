@@ -11,7 +11,10 @@ from homeassistant.config_entries import ConfigEntry, ConfigFlow, OptionsFlow
 from homeassistant.core import callback
 from homeassistant.data_entry_flow import FlowResult
 
-from . import CONF_IP_ADDRESS, CONF_NAME, DOMAIN
+from . import (
+    CONF_IP_ADDRESS, CONF_NAME, DOMAIN,
+    CONF_DIM_ENABLED, CONF_DIM_START, CONF_DIM_END, CONF_DIM_LEVEL, CONF_DIM_RESTORE,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -101,6 +104,7 @@ class MiniScreenESP32OptionsFlow(OptionsFlow):
         errors: dict[str, str] = {}
 
         current_ip: str = self.config_entry.data.get(CONF_IP_ADDRESS, "")
+        opts = self.config_entry.options
 
         if user_input is not None:
             new_ip: str = user_input[CONF_IP_ADDRESS].strip()
@@ -109,17 +113,31 @@ class MiniScreenESP32OptionsFlow(OptionsFlow):
             if not reachable:
                 errors["base"] = "cannot_connect"
             else:
-                # Update the config entry data with the new IP
+                # Update IP in config entry data
                 self.hass.config_entries.async_update_entry(
                     self.config_entry,
                     data={**self.config_entry.data, CONF_IP_ADDRESS: new_ip},
                     unique_id=new_ip,
                 )
-                return self.async_create_entry(title="", data={})
+                # Save dim schedule settings in options
+                return self.async_create_entry(title="", data={
+                    CONF_DIM_ENABLED:  user_input.get(CONF_DIM_ENABLED, False),
+                    CONF_DIM_START:    user_input.get(CONF_DIM_START, "22:00"),
+                    CONF_DIM_END:      user_input.get(CONF_DIM_END, "07:00"),
+                    CONF_DIM_LEVEL:    user_input.get(CONF_DIM_LEVEL, 5),
+                    CONF_DIM_RESTORE:  user_input.get(CONF_DIM_RESTORE, 255),
+                })
 
         schema = vol.Schema(
             {
                 vol.Required(CONF_IP_ADDRESS, default=current_ip): str,
+                vol.Optional(CONF_DIM_ENABLED, default=opts.get(CONF_DIM_ENABLED, False)): bool,
+                vol.Optional(CONF_DIM_START,   default=opts.get(CONF_DIM_START, "22:00")): str,
+                vol.Optional(CONF_DIM_END,     default=opts.get(CONF_DIM_END, "07:00")): str,
+                vol.Optional(CONF_DIM_LEVEL,   default=opts.get(CONF_DIM_LEVEL, 5)):
+                    vol.All(int, vol.Range(min=0, max=255)),
+                vol.Optional(CONF_DIM_RESTORE, default=opts.get(CONF_DIM_RESTORE, 255)):
+                    vol.All(int, vol.Range(min=0, max=255)),
             }
         )
 
