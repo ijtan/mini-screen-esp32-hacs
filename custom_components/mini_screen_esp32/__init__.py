@@ -105,7 +105,8 @@ def _register_services(hass: HomeAssistant) -> None:
     # ── send_message ──────────────────────────────────────────────────────────
     async def handle_send_message(call: ServiceCall) -> None:
         """Handle the send_message service call."""
-        message: str = call.data["message"]
+        from homeassistant.helpers.template import Template
+        message: str = Template(call.data["message"], hass).async_render(parse_result=False)
         style: str = call.data.get("style", "normal")
         font_size: int = int(call.data.get("font_size", 2))
         duration: int = int(call.data.get("duration", 5))
@@ -219,7 +220,8 @@ def _register_services(hass: HomeAssistant) -> None:
     # ── pin_message ───────────────────────────────────────────────────────────
     async def handle_pin_message(call: ServiceCall) -> None:
         """Handle the pin_message service call."""
-        message: str = call.data["message"]
+        from homeassistant.helpers.template import Template
+        message: str = Template(call.data["message"], hass).async_render(parse_result=False)
         font_size: int = int(call.data.get("font_size", 2))
         device_name: str | None = call.data.get("device_name")
 
@@ -244,7 +246,8 @@ def _register_services(hass: HomeAssistant) -> None:
     # ── scroll_message ────────────────────────────────────────────────────────
     async def handle_scroll_message(call: ServiceCall) -> None:
         """Handle the scroll_message service call."""
-        message: str = call.data["message"]
+        from homeassistant.helpers.template import Template
+        message: str = Template(call.data["message"], hass).async_render(parse_result=False)
         font_size: int = int(call.data.get("font_size", 2))
         device_name: str | None = call.data.get("device_name")
 
