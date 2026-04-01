@@ -167,13 +167,29 @@ async def _async_options_updated(hass: HomeAssistant, entry: ConfigEntry) -> Non
     if entry_data is None:
         return
     opts = entry.options
-    _apply_dim_schedule(
-        hass, entry_data,
-        enabled=opts.get(CONF_DIM_ENABLED, False),
-        start_str=opts.get(CONF_DIM_START, "22:00"),
-        end_str=opts.get(CONF_DIM_END, "07:00"),
-        dim_level=int(opts.get(CONF_DIM_LEVEL, 5)),
-        restore_level=int(opts.get(CONF_DIM_RESTORE, 255)),
+    enabled     = opts.get(CONF_DIM_ENABLED, False)
+    start_str   = opts.get(CONF_DIM_START, "22:00")
+    end_str     = opts.get(CONF_DIM_END, "07:00")
+    dim_level   = int(opts.get(CONF_DIM_LEVEL, 5))
+    restore     = int(opts.get(CONF_DIM_RESTORE, 255))
+
+    # Update HA-side time listeners
+    _apply_dim_schedule(hass, entry_data, enabled, start_str, end_str, dim_level, restore)
+
+    # Also push to firmware so it persists on device (survives HA being down)
+    ip = entry_data["ip_address"]
+    hass.async_create_task(
+        _call_device(
+            ip=ip,
+            path="/setDimSchedule",
+            params={
+                "enabled": "1" if enabled else "0",
+                "start":   start_str,
+                "end":     end_str,
+                "level":   dim_level,
+                "restore": restore,
+            },
+        )
     )
 
 
