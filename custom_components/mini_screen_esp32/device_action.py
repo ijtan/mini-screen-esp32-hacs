@@ -88,6 +88,7 @@ ACTION_SCHEMA = vol.Schema(
         vol.Optional("auto_clear_delay", default=0): vol.All(int, vol.Range(min=0, max=300)),
         vol.Optional("value_font_size", default=1): vol.All(int, vol.Range(min=1, max=2)),
         vol.Optional("unit", default=""): str,
+        vol.Optional("value_type", default="percentage"): vol.In(["percentage", "raw"]),
     }
 )
 
@@ -152,6 +153,7 @@ async def async_get_action_capabilities(
         fields[vol.Optional("min_value", default=0)] = vol.Coerce(float)
         fields[vol.Optional("max_value", default=100)] = vol.Coerce(float)
         fields[vol.Optional("label", default="")] = str
+        fields[vol.Optional("value_type", default="percentage")] = vol.In(["percentage", "raw"])
         fields[vol.Optional("value_text", default="")] = str
         fields[vol.Optional("unit", default="")] = str
         fields[vol.Optional("auto_clear_delay", default=0)] = vol.All(int, vol.Range(min=0, max=300))
@@ -273,6 +275,7 @@ async def async_call_action_from_config(
         raw_label: str = config.get("label", entity_id.split(".")[-1].replace("_", " ").title())
         raw_value_text: str = config.get("value_text", "")
         unit: str = config.get("unit", "").strip()
+        value_type: str = config.get("value_type", "percentage")
         auto_clear_delay: int = int(config.get("auto_clear_delay", 0))
         value_font_size: int = int(config.get("value_font_size", 1))
 
@@ -290,13 +293,18 @@ async def async_call_action_from_config(
         def _build_progress_params(pct: int, raw_sensor: str) -> dict:
             label = Template(raw_label, hass).async_render(parse_result=False) if raw_label else ""
             params: dict = {"value": pct, "label": label}
-            if raw_value_text.strip():
-                vt = Template(raw_value_text, hass).async_render(
-                    variables={"value": raw_sensor}, parse_result=False
-                )
-                params["value_text"] = vt
-            elif unit:
-                params["value_text"] = f"{raw_sensor} {unit}"
+            if value_type == "raw":
+                if raw_value_text.strip():
+                    vt = Template(raw_value_text, hass).async_render(
+                        variables={"value": raw_sensor}, parse_result=False
+                    )
+                    params["value_text"] = vt
+                else:
+                    suffix = unit
+                    if not suffix:
+                        state = hass.states.get(entity_id)
+                        suffix = (state.attributes.get("unit_of_measurement", "") if state else "")
+                    params["value_text"] = f"{raw_sensor} {suffix}".strip()
             if auto_clear_delay > 0:
                 params["auto_clear_delay"] = auto_clear_delay
             if value_font_size == 2:

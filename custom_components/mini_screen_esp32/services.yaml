@@ -491,26 +491,40 @@ pin_sensor_progress:
       selector:
         text:
 
-    value_text:
-      name: Value text
+    value_type:
+      name: Value Display
       description: >-
-        Custom text shown below the bar instead of the default percentage.
-        Supports HA templates — use {{ value }} for the raw sensor value.
-        Leave empty to show the default percentage. Set to a single space " " to hide.
-        Takes priority over the Unit field if both are set.
+        What to show below the progress bar. "Percentage" shows the calculated
+        percentage (default). "Raw value" shows the actual sensor value.
       required: false
-      example: "{{ value }} min"
+      default: "percentage"
       selector:
-        text:
+        select:
+          options:
+            - value: "percentage"
+              label: "Percentage (default)"
+            - value: "raw"
+              label: "Raw value"
 
     unit:
       name: Unit
       description: >-
-        Unit suffix to display after the raw sensor value (e.g. "min", "°C", "km/h").
-        Shows the raw sensor value instead of the default percentage.
-        Ignored if Value text is set.
+        Unit suffix shown after the raw sensor value (e.g. "min", "°C", "km/h").
+        Leave blank to use the entity's own unit automatically.
+        Only applies when Value Display is set to Raw value.
       required: false
-      example: "min"
+      example: "°C"
+      selector:
+        text:
+
+    value_text:
+      name: Value text (template)
+      description: >-
+        Custom template for the value shown below the bar. Use {{ value }} for
+        the raw sensor state. Overrides the Unit field when set.
+        Only applies when Value Display is set to Raw value.
+      required: false
+      example: "{{ value }} min left"
       selector:
         text:
 
