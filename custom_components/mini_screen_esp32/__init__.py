@@ -15,7 +15,7 @@ from homeassistant.helpers.event import async_track_state_change_event
 _LOGGER = logging.getLogger(__name__)
 
 DOMAIN = "mini_screen_esp32"
-PLATFORMS = ["notify"]
+PLATFORMS = ["notify", "button"]
 
 CONF_IP_ADDRESS = "ip_address"
 CONF_NAME = "name"
