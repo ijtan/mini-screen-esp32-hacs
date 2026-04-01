@@ -242,10 +242,10 @@ scroll_message:
         text:
 
 show_progress:
-  name: Show Progress Bar
+  name: Send Progress Bar
   description: >-
-    Display a labelled progress bar on one or all configured Mini Screen ESP32
-    devices.
+    Send a one-shot progress bar to one or all configured Mini Screen ESP32
+    devices. Label and value text support HA templates.
   fields:
     value:
       name: Value
@@ -341,10 +341,11 @@ pin_sensor:
         text:
 
 pin_sensor_progress:
-  name: Pin Sensor as Progress Bar
+  name: Track Sensor as Progress Bar
   description: >-
-    Track a numeric Home Assistant entity and display its value as a progress
-    bar. The display updates automatically whenever the entity state changes.
+    Subscribe to a numeric entity and display its value as a live progress bar.
+    The display updates automatically on every state change. Label and value
+    text support HA templates, re-rendered on each update.
   fields:
     entity_id:
       name: Entity
