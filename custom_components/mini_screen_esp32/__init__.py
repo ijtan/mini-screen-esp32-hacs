@@ -44,6 +44,7 @@ _ALL_SERVICES = [
     "pin_sensor",
     "pin_sensor_progress",
     "unpin_sensor",
+    "send_image",
 ]
 
 
@@ -467,6 +468,65 @@ def _register_services(hass: HomeAssistant) -> None:
                 _call_device(ip=entry_data["ip_address"], path="/unpin")
             )
 
+    # ── send_image ────────────────────────────────────────────────────────────
+    async def handle_send_image(call: ServiceCall) -> None:
+        """Convert an image to a 1-bit bitmap and send to the display."""
+        import io
+        from PIL import Image
+
+        image_path: str = call.data["image_path"]
+        dither: bool = bool(call.data.get("dither", True))
+        device_name: str | None = call.data.get("device_name")
+
+        entries = _get_matching_entries(hass, device_name)
+        if not entries:
+            _LOGGER.warning(
+                "send_image: no matching Mini Screen ESP32 entries found "
+                "(device_name=%s)", device_name,
+            )
+            return
+
+        # Load and convert image in executor to avoid blocking the event loop
+        def convert_image() -> bytes:
+            img = Image.open(image_path).convert("RGB")
+            img = img.resize((128, 64), Image.LANCZOS)
+            dither_mode = Image.Dither.FLOYDSTEINBERG if dither else Image.Dither.NONE
+            img = img.convert("1", dither=dither_mode)
+            # Pack into raw bytes: each byte = 8 horizontal pixels, MSB first
+            raw = bytearray(1024)
+            for y in range(64):
+                for x in range(128):
+                    pixel = img.getpixel((x, y))
+                    if pixel:
+                        byte_idx = (y * 128 + x) // 8
+                        bit_idx  = 7 - ((y * 128 + x) % 8)
+                        raw[byte_idx] |= (1 << bit_idx)
+            return bytes(raw)
+
+        try:
+            bitmap_bytes = await hass.async_add_executor_job(convert_image)
+        except Exception as err:
+            raise HomeAssistantError(f"Failed to convert image: {err}") from err
+
+        timeout = aiohttp.ClientTimeout(total=15)
+        for entry_data in entries:
+            async def _post(ip: str = entry_data["ip_address"]) -> None:
+                try:
+                    async with aiohttp.ClientSession(timeout=timeout) as session:
+                        async with session.post(
+                            f"http://{ip}/drawBitmap",
+                            data=bitmap_bytes,
+                            headers={"Content-Type": "application/octet-stream"},
+                        ) as response:
+                            if response.status >= 400:
+                                _LOGGER.warning(
+                                    "Mini Screen ESP32 at %s returned HTTP %s for /drawBitmap",
+                                    ip, response.status,
+                                )
+                except aiohttp.ClientError as err:
+                    _LOGGER.warning("Cannot connect to Mini Screen ESP32 at %s: %s", ip, err)
+            hass.async_create_task(_post())
+
     # ── Register all services ─────────────────────────────────────────────────
     hass.services.async_register(DOMAIN, "send_message",        handle_send_message)
     hass.services.async_register(DOMAIN, "flash",               handle_flash)
@@ -479,6 +539,7 @@ def _register_services(hass: HomeAssistant) -> None:
     hass.services.async_register(DOMAIN, "pin_sensor",          handle_pin_sensor)
     hass.services.async_register(DOMAIN, "pin_sensor_progress", handle_pin_sensor_progress)
     hass.services.async_register(DOMAIN, "unpin_sensor",        handle_unpin_sensor)
+    hass.services.async_register(DOMAIN, "send_image",          handle_send_image)
 
 
 def _get_matching_entries(
