@@ -1,6 +1,7 @@
 """Mini Screen ESP32 button platform."""
 from __future__ import annotations
 
+import asyncio
 import logging
 
 import aiohttp
@@ -59,6 +60,9 @@ class _MiniScreenButton(ButtonEntity):
         self._attr_device_info = device_info
 
     async def async_press(self) -> None:
+        self.hass.async_create_task(self._fire())
+
+    async def _fire(self) -> None:
         timeout = aiohttp.ClientTimeout(total=5)
         try:
             async with aiohttp.ClientSession(timeout=timeout) as session:
@@ -70,7 +74,9 @@ class _MiniScreenButton(ButtonEntity):
                             "Mini Screen ESP32 at %s returned HTTP %s for %s",
                             self._ip_address, response.status, self._path,
                         )
-        except aiohttp.ClientError as err:
+        except (aiohttp.ClientError, asyncio.TimeoutError):
+            pass  # Expected on restart — device reboots before responding
+        except Exception as err:  # noqa: BLE001
             raise HomeAssistantError(
                 f"Cannot connect to Mini Screen ESP32 at {self._ip_address}: {err}"
             ) from err
