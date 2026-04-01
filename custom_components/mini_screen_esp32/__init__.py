@@ -438,6 +438,10 @@ def _register_services(hass: HomeAssistant) -> None:
 
         auto_clear_delay: int = int(call.data.get("auto_clear_delay", 0))
         value_font_size: int = int(call.data.get("value_font_size", 1))
+        warn_enabled: bool = bool(call.data.get("warn_enabled", False))
+        warn_threshold: int = max(0, min(100, int(call.data.get("warn_threshold", 80))))
+        crit_enabled: bool = bool(call.data.get("crit_enabled", False))
+        crit_threshold: int = max(0, min(100, int(call.data.get("crit_threshold", 95))))
 
         params: dict[str, Any] = {"value": value, "label": label}
         if value_text:
@@ -446,6 +450,10 @@ def _register_services(hass: HomeAssistant) -> None:
             params["auto_clear_delay"] = auto_clear_delay
         if value_font_size == 2:
             params["value_font_size"] = 2
+        if warn_enabled:
+            params["warn"] = warn_threshold
+        if crit_enabled:
+            params["crit"] = crit_threshold
 
         for entry_data in entries:
             hass.async_create_task(
@@ -556,6 +564,10 @@ def _register_services(hass: HomeAssistant) -> None:
         value_type: str = call.data.get("value_type", "percentage")
         auto_clear_delay: int = int(call.data.get("auto_clear_delay", 0))
         value_font_size: int = int(call.data.get("value_font_size", 1))
+        warn_enabled: bool = bool(call.data.get("warn_enabled", False))
+        warn_threshold_raw: float = float(call.data.get("warn_threshold", 80))
+        crit_enabled: bool = bool(call.data.get("crit_enabled", False))
+        crit_threshold_raw: float = float(call.data.get("crit_threshold", 95))
 
         def _render_label() -> str:
             return Template(raw_label, hass).async_render(parse_result=False) if raw_label else ""
@@ -604,6 +616,14 @@ def _register_services(hass: HomeAssistant) -> None:
                 existing_unsub()
                 entry_data["sensor_unsub"] = None
 
+            def _threshold_to_pct(raw: float) -> int:
+                if value_type == "raw":
+                    span = max_value - min_value
+                    if span == 0:
+                        return 0
+                    return max(0, min(100, int(round((raw - min_value) / span * 100))))
+                return max(0, min(100, int(round(raw))))
+
             def _build_progress_params(pct: int, raw_sensor: str) -> dict:
                 params: dict = {"value": pct, "label": _render_label()}
                 vt = _render_value_text(raw_sensor)
@@ -613,6 +633,10 @@ def _register_services(hass: HomeAssistant) -> None:
                     params["auto_clear_delay"] = auto_clear_delay
                 if value_font_size == 2:
                     params["value_font_size"] = 2
+                if warn_enabled:
+                    params["warn"] = _threshold_to_pct(warn_threshold_raw)
+                if crit_enabled:
+                    params["crit"] = _threshold_to_pct(crit_threshold_raw)
                 return params
 
             # Send current state immediately

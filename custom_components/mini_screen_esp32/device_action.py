@@ -89,6 +89,10 @@ ACTION_SCHEMA = vol.Schema(
         vol.Optional("value_font_size", default=1): vol.All(int, vol.Range(min=1, max=2)),
         vol.Optional("unit", default=""): str,
         vol.Optional("value_type", default="percentage"): vol.In(["percentage", "raw"]),
+        vol.Optional("warn_enabled", default=False): bool,
+        vol.Optional("warn_threshold", default=80): vol.Coerce(float),
+        vol.Optional("crit_enabled", default=False): bool,
+        vol.Optional("crit_threshold", default=95): vol.Coerce(float),
     }
 )
 
@@ -147,6 +151,10 @@ async def async_get_action_capabilities(
         fields[vol.Optional("label", default="")] = str
         fields[vol.Optional("auto_clear_delay", default=0)] = vol.All(int, vol.Range(min=0, max=300))
         fields[vol.Optional("value_font_size", default=1)] = vol.All(int, vol.Range(min=1, max=2))
+        fields[vol.Optional("warn_enabled", default=False)] = bool
+        fields[vol.Optional("warn_threshold", default=80)] = vol.All(int, vol.Range(min=0, max=100))
+        fields[vol.Optional("crit_enabled", default=False)] = bool
+        fields[vol.Optional("crit_threshold", default=95)] = vol.All(int, vol.Range(min=0, max=100))
 
     elif action_type == ACTION_PIN_SENSOR_PROGRESS:
         fields[vol.Required("entity_id")] = str
@@ -158,6 +166,10 @@ async def async_get_action_capabilities(
         fields[vol.Optional("unit", default="")] = str
         fields[vol.Optional("auto_clear_delay", default=0)] = vol.All(int, vol.Range(min=0, max=300))
         fields[vol.Optional("value_font_size", default=1)] = vol.All(int, vol.Range(min=1, max=2))
+        fields[vol.Optional("warn_enabled", default=False)] = bool
+        fields[vol.Optional("warn_threshold", default=80)] = vol.Coerce(float)
+        fields[vol.Optional("crit_enabled", default=False)] = bool
+        fields[vol.Optional("crit_threshold", default=95)] = vol.Coerce(float)
 
     elif action_type == ACTION_PIN_SENSOR:
         fields[vol.Required("entity_id")] = str
@@ -263,6 +275,10 @@ async def async_call_action_from_config(
         vfs = int(config.get("value_font_size", 1))
         if vfs == 2:
             params["value_font_size"] = 2
+        if config.get("warn_enabled", False):
+            params["warn"] = max(0, min(100, int(config.get("warn_threshold", 80))))
+        if config.get("crit_enabled", False):
+            params["crit"] = max(0, min(100, int(config.get("crit_threshold", 95))))
         hass.async_create_task(_call_device(ip=ip, path="/showProgress", params=params))
         return
 
@@ -278,6 +294,18 @@ async def async_call_action_from_config(
         value_type: str = config.get("value_type", "percentage")
         auto_clear_delay: int = int(config.get("auto_clear_delay", 0))
         value_font_size: int = int(config.get("value_font_size", 1))
+        warn_enabled: bool = bool(config.get("warn_enabled", False))
+        warn_threshold_raw: float = float(config.get("warn_threshold", 80))
+        crit_enabled: bool = bool(config.get("crit_enabled", False))
+        crit_threshold_raw: float = float(config.get("crit_threshold", 95))
+
+        def _threshold_to_pct(raw: float) -> int:
+            if value_type == "raw":
+                span = max_value - min_value
+                if span == 0:
+                    return 0
+                return max(0, min(100, int(round((raw - min_value) / span * 100))))
+            return max(0, min(100, int(round(raw))))
 
         def _to_percent(state_value: str) -> int:
             try:
@@ -309,6 +337,10 @@ async def async_call_action_from_config(
                 params["auto_clear_delay"] = auto_clear_delay
             if value_font_size == 2:
                 params["value_font_size"] = 2
+            if warn_enabled:
+                params["warn"] = _threshold_to_pct(warn_threshold_raw)
+            if crit_enabled:
+                params["crit"] = _threshold_to_pct(crit_threshold_raw)
             return params
 
         # Cancel existing subscription
