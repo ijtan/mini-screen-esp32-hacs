@@ -7,9 +7,8 @@ from typing import Any
 import aiohttp
 import voluptuous as vol
 
-from homeassistant.config_entries import ConfigFlow, OptionsFlow
+from homeassistant.config_entries import ConfigEntry, ConfigFlow, ConfigFlowResult, OptionsFlow
 from homeassistant.core import callback
-from homeassistant.data_entry_flow import FlowResult
 
 from . import (
     CONF_IP_ADDRESS, CONF_NAME, DOMAIN,
@@ -46,7 +45,7 @@ class MiniScreenESP32ConfigFlow(ConfigFlow, domain=DOMAIN):
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
-    ) -> FlowResult:
+    ) -> ConfigFlowResult:
         """Handle the initial configuration step."""
         errors: dict[str, str] = {}
 
@@ -87,7 +86,7 @@ class MiniScreenESP32ConfigFlow(ConfigFlow, domain=DOMAIN):
     @callback
     def async_get_options_flow(config_entry: ConfigEntry) -> MiniScreenESP32OptionsFlow:
         """Return the options flow handler."""
-        return MiniScreenESP32OptionsFlow(config_entry)
+        return MiniScreenESP32OptionsFlow()
 
 
 class MiniScreenESP32OptionsFlow(OptionsFlow):
@@ -95,7 +94,7 @@ class MiniScreenESP32OptionsFlow(OptionsFlow):
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
-    ) -> FlowResult:
+    ) -> ConfigFlowResult:
         """Handle the options step."""
         errors: dict[str, str] = {}
 
@@ -113,7 +112,6 @@ class MiniScreenESP32OptionsFlow(OptionsFlow):
                 self.hass.config_entries.async_update_entry(
                     self.config_entry,
                     data={**self.config_entry.data, CONF_IP_ADDRESS: new_ip},
-                    unique_id=new_ip,
                 )
                 # Save dim schedule settings in options
                 return self.async_create_entry(title="", data={
