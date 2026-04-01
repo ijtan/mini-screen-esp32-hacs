@@ -7,7 +7,7 @@ from typing import Any
 import aiohttp
 import voluptuous as vol
 
-from homeassistant.config_entries import ConfigEntry, ConfigFlow, OptionsFlow
+from homeassistant.config_entries import ConfigFlow, OptionsFlow
 from homeassistant.core import callback
 from homeassistant.data_entry_flow import FlowResult
 
@@ -92,10 +92,6 @@ class MiniScreenESP32ConfigFlow(ConfigFlow, domain=DOMAIN):
 
 class MiniScreenESP32OptionsFlow(OptionsFlow):
     """Handle options flow for Mini Screen ESP32 (edit IP after setup)."""
-
-    def __init__(self, config_entry: ConfigEntry) -> None:
-        """Initialise the options flow."""
-        self.config_entry = config_entry
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None

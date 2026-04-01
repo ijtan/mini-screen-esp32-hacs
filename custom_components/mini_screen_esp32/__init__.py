@@ -144,16 +144,36 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     # Re-apply dim schedule from saved options (survives restarts)
     opts = entry.options
-    if opts.get(CONF_DIM_ENABLED, False):
-        entry_data = hass.data[DOMAIN][entry.entry_id]
-        _apply_dim_schedule(
-            hass, entry_data,
-            enabled=True,
-            start_str=opts.get(CONF_DIM_START, "22:00"),
-            end_str=opts.get(CONF_DIM_END, "07:00"),
-            dim_level=int(opts.get(CONF_DIM_LEVEL, 5)),
-            restore_level=int(opts.get(CONF_DIM_RESTORE, 255)),
+    entry_data = hass.data[DOMAIN][entry.entry_id]
+    dim_enabled = opts.get(CONF_DIM_ENABLED, False)
+    dim_start   = opts.get(CONF_DIM_START, "22:00")
+    dim_end     = opts.get(CONF_DIM_END, "07:00")
+    dim_level   = int(opts.get(CONF_DIM_LEVEL, 5))
+    dim_restore = int(opts.get(CONF_DIM_RESTORE, 255))
+
+    _apply_dim_schedule(
+        hass, entry_data,
+        enabled=dim_enabled,
+        start_str=dim_start,
+        end_str=dim_end,
+        dim_level=dim_level,
+        restore_level=dim_restore,
+    )
+
+    # Always push current schedule to firmware on startup so device flash stays in sync
+    hass.async_create_task(
+        _call_device(
+            ip=ip_address,
+            path="/setDimSchedule",
+            params={
+                "enabled": "1" if dim_enabled else "0",
+                "start":   dim_start,
+                "end":     dim_end,
+                "level":   dim_level,
+                "restore": dim_restore,
+            },
         )
+    )
 
     # Re-apply dim schedule when options are updated via the UI
     entry.async_on_unload(entry.add_update_listener(_async_options_updated))
