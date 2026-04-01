@@ -269,9 +269,23 @@ def _register_services(hass: HomeAssistant) -> None:
     # ── show_progress ─────────────────────────────────────────────────────────
     async def handle_show_progress(call: ServiceCall) -> None:
         """Handle the show_progress service call."""
+        from homeassistant.helpers.template import Template
+
         value: int = int(call.data["value"])
-        label: str = call.data.get("label", "")
         device_name: str | None = call.data.get("device_name")
+
+        # Render label template if provided
+        raw_label: str = call.data.get("label", "")
+        label = Template(raw_label, hass).async_render(parse_result=False) if raw_label else ""
+
+        # value_text: None = not provided (use default %), " " = hide, else custom/template
+        raw_value_text: str | None = call.data.get("value_text")
+        if raw_value_text is None:
+            value_text = ""  # firmware default: show X%
+        elif raw_value_text.strip() == "":
+            value_text = "__hide__"  # hide entirely
+        else:
+            value_text = Template(raw_value_text, hass).async_render(parse_result=False)
 
         entries = _get_matching_entries(hass, device_name)
         if not entries:
@@ -282,12 +296,16 @@ def _register_services(hass: HomeAssistant) -> None:
             )
             return
 
+        params: dict[str, Any] = {"value": value, "label": label}
+        if value_text:
+            params["value_text"] = value_text
+
         for entry_data in entries:
             hass.async_create_task(
                 _call_device(
                     ip=entry_data["ip_address"],
                     path="/showProgress",
-                    params={"value": value, "label": label},
+                    params=params,
                 )
             )
 

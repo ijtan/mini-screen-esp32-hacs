@@ -262,9 +262,23 @@ show_progress:
 
     label:
       name: Label
-      description: Optional label shown above the progress bar.
+      description: >-
+        Optional label shown above the progress bar. Supports HA templates
+        (e.g. "{{ states('sensor.temp') }}°C").
       required: false
       example: "Downloading"
+      selector:
+        text:
+
+    value_text:
+      name: Value text
+      description: >-
+        Custom text shown below the bar instead of the default percentage.
+        Supports HA templates (e.g. "{{ states('sensor.temp') }}°C").
+        Leave empty to show the default percentage. Set to a single space " "
+        to hide it entirely.
+      required: false
+      example: "23°C"
       selector:
         text:
 
