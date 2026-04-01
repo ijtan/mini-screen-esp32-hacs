@@ -385,10 +385,21 @@ pin_sensor_progress:
     label:
       name: Label
       description: >-
-        Label shown above the progress bar. Defaults to the entity name derived
-        from the entity_id if not provided.
+        Label shown above the progress bar. Supports HA templates
+        (e.g. "{{ states('sensor.remaining_time') }} left").
+        Defaults to the entity name if not provided. Re-rendered on each update.
       required: false
       example: "Battery"
+      selector:
+        text:
+
+    value_text:
+      name: Value text
+      description: >-
+        Custom text shown below the bar instead of the default percentage.
+        Supports HA templates. Leave empty for default percentage, single space to hide.
+      required: false
+      example: "{{ states('sensor.temp') }}°C"
       selector:
         text:
 

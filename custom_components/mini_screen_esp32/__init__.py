@@ -396,9 +396,22 @@ def _register_services(hass: HomeAssistant) -> None:
         max_value: float = float(call.data.get("max_value", 100))
         device_name: str | None = call.data.get("device_name")
 
+        from homeassistant.helpers.template import Template
+
         # Default label: last part of entity_id, underscores → spaces, title case
         default_label = entity_id.split(".")[-1].replace("_", " ").title()
-        label: str = call.data.get("label", default_label)
+        raw_label: str = call.data.get("label", default_label)
+        raw_value_text: str | None = call.data.get("value_text")
+
+        def _render_label() -> str:
+            return Template(raw_label, hass).async_render(parse_result=False) if raw_label else ""
+
+        def _render_value_text() -> str:
+            if raw_value_text is None:
+                return ""
+            if raw_value_text.strip() == "":
+                return "__hide__"
+            return Template(raw_value_text, hass).async_render(parse_result=False)
 
         entries = _get_matching_entries(hass, device_name)
         if not entries:
@@ -427,6 +440,13 @@ def _register_services(hass: HomeAssistant) -> None:
                 existing_unsub()
                 entry_data["sensor_unsub"] = None
 
+            def _build_progress_params(pct: int) -> dict:
+                params: dict = {"value": pct, "label": _render_label()}
+                vt = _render_value_text()
+                if vt:
+                    params["value_text"] = vt
+                return params
+
             # Send current state immediately
             current_state = hass.states.get(entity_id)
             if current_state is not None:
@@ -435,7 +455,7 @@ def _register_services(hass: HomeAssistant) -> None:
                     _call_device(
                         ip=entry_data["ip_address"],
                         path="/showProgress",
-                        params={"value": pct, "label": label},
+                        params=_build_progress_params(pct),
                     )
                 )
 
@@ -444,7 +464,6 @@ def _register_services(hass: HomeAssistant) -> None:
             def _on_state_change_progress(
                 event: Event,
                 _entry_data: dict = entry_data,
-                _label: str = label,
             ) -> None:
                 new_state = event.data.get("new_state")
                 if new_state is None:
@@ -454,7 +473,7 @@ def _register_services(hass: HomeAssistant) -> None:
                     _call_device(
                         ip=_entry_data["ip_address"],
                         path="/showProgress",
-                        params={"value": pct, "label": _label},
+                        params=_build_progress_params(pct),
                     )
                 )
 
