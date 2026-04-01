@@ -9,8 +9,9 @@ import voluptuous as vol
 _LOGGER = logging.getLogger(__name__)
 
 from homeassistant.const import CONF_DEVICE_ID, CONF_DOMAIN, CONF_TYPE
-from homeassistant.core import Context, HomeAssistant
+from homeassistant.core import Context, Event, HomeAssistant, callback
 from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers.event import async_track_state_change_event
 
 from . import DOMAIN, STYLE_ENDPOINTS, _build_send_params, _call_device
 
@@ -29,6 +30,9 @@ ACTION_SET_BRIGHTNESS   = "set_brightness"
 ACTION_PIN_MESSAGE      = "pin_message"
 ACTION_SCROLL_MESSAGE   = "scroll_message"
 ACTION_SHOW_PROGRESS    = "show_progress"
+ACTION_PIN_SENSOR_PROGRESS = "pin_sensor_progress"
+ACTION_PIN_SENSOR       = "pin_sensor"
+ACTION_UNPIN_SENSOR     = "unpin_sensor"
 ACTION_SEND_IMAGE       = "send_image"
 
 _STYLE_MAP = {
@@ -55,8 +59,11 @@ _ALL_ACTIONS: list[tuple[str, str]] = [
     (ACTION_SET_BRIGHTNESS,    "Set brightness"),
     (ACTION_PIN_MESSAGE,       "Pin message"),
     (ACTION_SCROLL_MESSAGE,    "Scroll message"),
-    (ACTION_SHOW_PROGRESS,     "Show progress bar"),
-    (ACTION_SEND_IMAGE,        "Send image"),
+    (ACTION_SHOW_PROGRESS,          "Show progress bar"),
+    (ACTION_PIN_SENSOR_PROGRESS,    "Track sensor as progress bar"),
+    (ACTION_PIN_SENSOR,             "Track sensor (pin value)"),
+    (ACTION_UNPIN_SENSOR,           "Unpin sensor"),
+    (ACTION_SEND_IMAGE,             "Send image"),
 ]
 
 ACTION_SCHEMA = vol.Schema(
@@ -71,6 +78,13 @@ ACTION_SCHEMA = vol.Schema(
         vol.Optional("level", default=128): vol.All(int, vol.Range(min=0, max=255)),
         vol.Optional("value", default=0): vol.All(int, vol.Range(min=0, max=100)),
         vol.Optional("label", default=""): str,
+        vol.Optional("entity_id", default=""): str,
+        vol.Optional("template", default="{{ value }}"): str,
+        vol.Optional("min_value", default=0): vol.Coerce(float),
+        vol.Optional("max_value", default=100): vol.Coerce(float),
+        vol.Optional("value_text", default=""): str,
+        vol.Optional("image_url", default=""): str,
+        vol.Optional("dither", default=True): bool,
     }
 )
 
@@ -92,7 +106,7 @@ async def async_get_action_capabilities(
     action_type = config[CONF_TYPE]
 
     # Actions with no extra fields
-    if action_type in (ACTION_FLASH, ACTION_CLEAR, ACTION_UNPIN):
+    if action_type in (ACTION_FLASH, ACTION_CLEAR, ACTION_UNPIN, ACTION_UNPIN_SENSOR):
         return {}
 
     fields: dict = {}
@@ -127,6 +141,20 @@ async def async_get_action_capabilities(
     elif action_type == ACTION_SHOW_PROGRESS:
         fields[vol.Required("value")] = vol.All(int, vol.Range(min=0, max=100))
         fields[vol.Optional("label", default="")] = str
+
+    elif action_type == ACTION_PIN_SENSOR_PROGRESS:
+        fields[vol.Required("entity_id")] = str
+        fields[vol.Optional("min_value", default=0)] = vol.Coerce(float)
+        fields[vol.Optional("max_value", default=100)] = vol.Coerce(float)
+        fields[vol.Optional("label", default="")] = str
+        fields[vol.Optional("value_text", default="")] = str
+
+    elif action_type == ACTION_PIN_SENSOR:
+        fields[vol.Required("entity_id")] = str
+        fields[vol.Optional("template", default="{{ value }}")] = str
+        fields[vol.Optional("font_size", default=2)] = vol.All(
+            int, vol.Range(min=1, max=3)
+        )
 
     elif action_type == ACTION_SEND_IMAGE:
         fields[vol.Required("image_url")] = str
@@ -225,6 +253,114 @@ async def async_call_action_from_config(
                 },
             )
         )
+        return
+
+    if action_type == ACTION_PIN_SENSOR_PROGRESS:
+        from homeassistant.helpers.template import Template
+
+        entity_id: str = config.get("entity_id", "")
+        min_value: float = float(config.get("min_value", 0))
+        max_value: float = float(config.get("max_value", 100))
+        raw_label: str = config.get("label", entity_id.split(".")[-1].replace("_", " ").title())
+        raw_value_text: str = config.get("value_text", "")
+
+        def _to_percent(state_value: str) -> int:
+            try:
+                raw = float(state_value)
+            except ValueError:
+                return 0
+            span = max_value - min_value
+            if span == 0:
+                return 0
+            pct = (raw - min_value) / span * 100.0
+            return max(0, min(100, int(round(pct))))
+
+        def _build_progress_params(pct: int) -> dict:
+            label = Template(raw_label, hass).async_render(parse_result=False) if raw_label else ""
+            params: dict = {"value": pct, "label": label}
+            if raw_value_text.strip():
+                vt = Template(raw_value_text, hass).async_render(parse_result=False)
+                params["value_text"] = vt
+            return params
+
+        # Cancel existing subscription
+        existing_unsub = entry_data.get("sensor_unsub")
+        if existing_unsub is not None:
+            existing_unsub()
+            entry_data["sensor_unsub"] = None
+
+        # Send current state immediately
+        current_state = hass.states.get(entity_id)
+        if current_state is not None:
+            hass.async_create_task(
+                _call_device(ip=ip, path="/showProgress",
+                             params=_build_progress_params(_to_percent(current_state.state)))
+            )
+
+        @callback
+        def _on_progress_change(event: Event, _entry_data: dict = entry_data) -> None:
+            new_state = event.data.get("new_state")
+            if new_state is None:
+                return
+            hass.async_create_task(
+                _call_device(ip=_entry_data["ip_address"], path="/showProgress",
+                             params=_build_progress_params(_to_percent(new_state.state)))
+            )
+
+        entry_data["sensor_unsub"] = async_track_state_change_event(
+            hass, [entity_id], _on_progress_change
+        )
+        return
+
+    if action_type == ACTION_PIN_SENSOR:
+        from homeassistant.helpers.template import Template
+
+        entity_id = config.get("entity_id", "")
+        template: str = config.get("template", "{{ value }}")
+        font_size: int = int(config.get("font_size", 2))
+
+        def _format_message(state_value: str) -> str:
+            return Template(template, hass).async_render(
+                variables={"value": state_value}, parse_result=False
+            )
+
+        # Cancel existing subscription
+        existing_unsub = entry_data.get("sensor_unsub")
+        if existing_unsub is not None:
+            existing_unsub()
+            entry_data["sensor_unsub"] = None
+
+        # Send current state immediately
+        current_state = hass.states.get(entity_id)
+        if current_state is not None:
+            hass.async_create_task(
+                _call_device(ip=ip, path="/pin",
+                             params={"message": _format_message(current_state.state),
+                                     "font_size": font_size})
+            )
+
+        @callback
+        def _on_sensor_change(event: Event, _entry_data: dict = entry_data) -> None:
+            new_state = event.data.get("new_state")
+            if new_state is None:
+                return
+            hass.async_create_task(
+                _call_device(ip=_entry_data["ip_address"], path="/pin",
+                             params={"message": _format_message(new_state.state),
+                                     "font_size": font_size})
+            )
+
+        entry_data["sensor_unsub"] = async_track_state_change_event(
+            hass, [entity_id], _on_sensor_change
+        )
+        return
+
+    if action_type == ACTION_UNPIN_SENSOR:
+        unsub = entry_data.get("sensor_unsub")
+        if unsub is not None:
+            unsub()
+            entry_data["sensor_unsub"] = None
+        hass.async_create_task(_call_device(ip=ip, path="/unpin"))
         return
 
     if action_type == ACTION_SEND_IMAGE:

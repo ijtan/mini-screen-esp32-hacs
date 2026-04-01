@@ -10,7 +10,7 @@ import aiohttp
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import Event, HomeAssistant, ServiceCall, callback
 from homeassistant.exceptions import HomeAssistantError
-from homeassistant.helpers.event import async_track_state_change_event
+from homeassistant.helpers.event import async_track_state_change_event, async_track_time_change
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -38,6 +38,7 @@ _ALL_SERVICES = [
     "clear",
     "unpin",
     "set_brightness",
+    "set_dim_schedule",
     "pin_message",
     "scroll_message",
     "show_progress",
@@ -66,6 +67,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         "name": name,
         "entry": entry,
         "sensor_unsub": None,
+        "dim_unsub_start": None,
+        "dim_unsub_end": None,
     }
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
@@ -79,13 +82,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
-    # Cancel sensor subscription if active
+    # Cancel sensor and dim subscriptions if active
     entry_data = hass.data.get(DOMAIN, {}).get(entry.entry_id)
     if entry_data is not None:
-        unsub = entry_data.get("sensor_unsub")
-        if unsub is not None:
-            unsub()
-            entry_data["sensor_unsub"] = None
+        for key in ("sensor_unsub", "dim_unsub_start", "dim_unsub_end"):
+            unsub = entry_data.get(key)
+            if unsub is not None:
+                unsub()
+                entry_data[key] = None
 
     unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if unload_ok:
@@ -338,7 +342,10 @@ def _register_services(hass: HomeAssistant) -> None:
             return
 
         def _format_message(state_value: str, tmpl: str) -> str:
-            return tmpl.replace("{{ value }}", state_value).replace("{{value}}", state_value)
+            from homeassistant.helpers.template import Template
+            return Template(tmpl, hass).async_render(
+                variables={"value": state_value}, parse_result=False
+            )
 
         for entry_data in entries:
             # Cancel existing subscription
@@ -574,12 +581,82 @@ def _register_services(hass: HomeAssistant) -> None:
                     _LOGGER.warning("Cannot connect to Mini Screen ESP32 at %s: %s", ip, err)
             hass.async_create_task(_post())
 
+    # ── set_dim_schedule ──────────────────────────────────────────────────────
+    async def handle_set_dim_schedule(call: ServiceCall) -> None:
+        """Set up (or cancel) a daily auto-dim schedule for one or all devices."""
+        enabled: bool = bool(call.data.get("enabled", True))
+        device_name: str | None = call.data.get("device_name")
+
+        entries = _get_matching_entries(hass, device_name)
+        if not entries:
+            _LOGGER.warning(
+                "set_dim_schedule: no matching Mini Screen ESP32 entries found "
+                "(device_name=%s)",
+                device_name,
+            )
+            return
+
+        for entry_data in entries:
+            # Cancel existing dim listeners
+            for key in ("dim_unsub_start", "dim_unsub_end"):
+                unsub = entry_data.get(key)
+                if unsub is not None:
+                    unsub()
+                    entry_data[key] = None
+
+            if not enabled:
+                continue
+
+            start_str: str = call.data.get("start_time", "22:00")
+            end_str: str = call.data.get("end_time", "07:00")
+            dim_level: int = int(call.data.get("dim_level", 5))
+            restore_level: int = int(call.data.get("restore_level", 255))
+
+            try:
+                start_h, start_m = (int(x) for x in start_str.split(":"))
+                end_h, end_m = (int(x) for x in end_str.split(":"))
+            except (ValueError, AttributeError):
+                _LOGGER.error(
+                    "set_dim_schedule: invalid time format (expected HH:MM), "
+                    "got start=%s end=%s",
+                    start_str, end_str,
+                )
+                continue
+
+            ip = entry_data["ip_address"]
+
+            @callback
+            def _on_dim_start(_now: Any, _ip: str = ip, _level: int = dim_level) -> None:
+                hass.async_create_task(
+                    _call_device(ip=_ip, path="/setBrightness", params={"level": _level})
+                )
+
+            @callback
+            def _on_dim_end(_now: Any, _ip: str = ip, _level: int = restore_level) -> None:
+                hass.async_create_task(
+                    _call_device(ip=_ip, path="/setBrightness", params={"level": _level})
+                )
+
+            entry_data["dim_unsub_start"] = async_track_time_change(
+                hass, _on_dim_start, hour=start_h, minute=start_m, second=0
+            )
+            entry_data["dim_unsub_end"] = async_track_time_change(
+                hass, _on_dim_end, hour=end_h, minute=end_m, second=0
+            )
+
+            _LOGGER.debug(
+                "Mini Screen ESP32 dim schedule set for %s: dim to %d at %02d:%02d, "
+                "restore to %d at %02d:%02d",
+                ip, dim_level, start_h, start_m, restore_level, end_h, end_m,
+            )
+
     # ── Register all services ─────────────────────────────────────────────────
     hass.services.async_register(DOMAIN, "send_message",        handle_send_message)
     hass.services.async_register(DOMAIN, "flash",               handle_flash)
     hass.services.async_register(DOMAIN, "clear",               handle_clear)
     hass.services.async_register(DOMAIN, "unpin",               handle_unpin)
     hass.services.async_register(DOMAIN, "set_brightness",      handle_set_brightness)
+    hass.services.async_register(DOMAIN, "set_dim_schedule",    handle_set_dim_schedule)
     hass.services.async_register(DOMAIN, "pin_message",         handle_pin_message)
     hass.services.async_register(DOMAIN, "scroll_message",      handle_scroll_message)
     hass.services.async_register(DOMAIN, "show_progress",       handle_show_progress)

@@ -39,6 +39,8 @@
       "scroll_message": "Scroll message",
       "show_progress": "Send progress bar",
       "pin_sensor_progress": "Track sensor as progress bar",
+      "pin_sensor": "Track sensor (pin value)",
+      "unpin_sensor": "Unpin sensor",
       "send_image": "Send image"
     }
   },

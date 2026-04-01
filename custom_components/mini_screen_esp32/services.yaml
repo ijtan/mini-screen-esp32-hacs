@@ -166,6 +166,74 @@ set_brightness:
       selector:
         text:
 
+set_dim_schedule:
+  name: Set Dim Schedule
+  description: >-
+    Schedule the display to automatically dim at a set time each day and restore
+    brightness at another time. Call with enabled: false to cancel the schedule.
+  fields:
+    enabled:
+      name: Enabled
+      description: Turn the dim schedule on or off.
+      required: true
+      default: true
+      selector:
+        boolean:
+
+    start_time:
+      name: Dim Time
+      description: Time to dim the display each day (HH:MM, 24-hour).
+      required: false
+      default: "22:00"
+      example: "22:00"
+      selector:
+        text:
+
+    end_time:
+      name: Restore Time
+      description: Time to restore full brightness each day (HH:MM, 24-hour).
+      required: false
+      default: "07:00"
+      example: "07:00"
+      selector:
+        text:
+
+    dim_level:
+      name: Dim Brightness
+      description: Brightness level during the dim period (0–255).
+      required: false
+      default: 5
+      example: 5
+      selector:
+        number:
+          min: 0
+          max: 255
+          step: 1
+          mode: slider
+
+    restore_level:
+      name: Restore Brightness
+      description: Brightness level to restore to after the dim period (0–255).
+      required: false
+      default: 255
+      example: 255
+      selector:
+        number:
+          min: 0
+          max: 255
+          step: 1
+          mode: slider
+
+    device_name:
+      name: Device Name
+      description: >-
+        Name of the specific Mini Screen ESP32 device to target. If omitted,
+        all configured devices are updated.
+      required: false
+      example: "Mini Screen"
+      selector:
+        text:
+
 pin_message:
   name: Pin Message
   description: >-
