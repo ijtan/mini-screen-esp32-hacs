@@ -1,7 +1,7 @@
 {
   "domain": "mini_screen_esp32",
   "name": "Mini Screen ESP32",
-  "version": "1.0.11",
+  "version": "1.0.12",
   "integration_type": "hub",
   "iot_class": "local_push",
   "config_flow": true,
