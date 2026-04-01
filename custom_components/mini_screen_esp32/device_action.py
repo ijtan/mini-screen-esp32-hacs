@@ -85,6 +85,7 @@ ACTION_SCHEMA = vol.Schema(
         vol.Optional("value_text", default=""): str,
         vol.Optional("image_url", default=""): str,
         vol.Optional("dither", default=True): bool,
+        vol.Optional("auto_clear_delay", default=0): vol.All(int, vol.Range(min=0, max=300)),
     }
 )
 
@@ -141,6 +142,7 @@ async def async_get_action_capabilities(
     elif action_type == ACTION_SHOW_PROGRESS:
         fields[vol.Required("value")] = vol.All(int, vol.Range(min=0, max=100))
         fields[vol.Optional("label", default="")] = str
+        fields[vol.Optional("auto_clear_delay", default=0)] = vol.All(int, vol.Range(min=0, max=300))
 
     elif action_type == ACTION_PIN_SENSOR_PROGRESS:
         fields[vol.Required("entity_id")] = str
@@ -148,6 +150,7 @@ async def async_get_action_capabilities(
         fields[vol.Optional("max_value", default=100)] = vol.Coerce(float)
         fields[vol.Optional("label", default="")] = str
         fields[vol.Optional("value_text", default="")] = str
+        fields[vol.Optional("auto_clear_delay", default=0)] = vol.All(int, vol.Range(min=0, max=300))
 
     elif action_type == ACTION_PIN_SENSOR:
         fields[vol.Required("entity_id")] = str
@@ -243,16 +246,14 @@ async def async_call_action_from_config(
         return
 
     if action_type == ACTION_SHOW_PROGRESS:
-        hass.async_create_task(
-            _call_device(
-                ip=ip,
-                path="/showProgress",
-                params={
-                    "value": config.get("value", 0),
-                    "label": config.get("label", ""),
-                },
-            )
-        )
+        params: dict = {
+            "value": config.get("value", 0),
+            "label": config.get("label", ""),
+        }
+        acd = int(config.get("auto_clear_delay", 0))
+        if acd > 0:
+            params["auto_clear_delay"] = acd
+        hass.async_create_task(_call_device(ip=ip, path="/showProgress", params=params))
         return
 
     if action_type == ACTION_PIN_SENSOR_PROGRESS:
@@ -263,6 +264,7 @@ async def async_call_action_from_config(
         max_value: float = float(config.get("max_value", 100))
         raw_label: str = config.get("label", entity_id.split(".")[-1].replace("_", " ").title())
         raw_value_text: str = config.get("value_text", "")
+        auto_clear_delay: int = int(config.get("auto_clear_delay", 0))
 
         def _to_percent(state_value: str) -> int:
             try:
@@ -281,6 +283,8 @@ async def async_call_action_from_config(
             if raw_value_text.strip():
                 vt = Template(raw_value_text, hass).async_render(parse_result=False)
                 params["value_text"] = vt
+            if auto_clear_delay > 0:
+                params["auto_clear_delay"] = auto_clear_delay
             return params
 
         # Cancel existing subscription

@@ -303,9 +303,13 @@ def _register_services(hass: HomeAssistant) -> None:
             )
             return
 
+        auto_clear_delay: int = int(call.data.get("auto_clear_delay", 0))
+
         params: dict[str, Any] = {"value": value, "label": label}
         if value_text:
             params["value_text"] = value_text
+        if auto_clear_delay > 0:
+            params["auto_clear_delay"] = auto_clear_delay
 
         for entry_data in entries:
             hass.async_create_task(
@@ -412,6 +416,7 @@ def _register_services(hass: HomeAssistant) -> None:
         default_label = entity_id.split(".")[-1].replace("_", " ").title()
         raw_label: str = call.data.get("label", default_label)
         raw_value_text: str | None = call.data.get("value_text")
+        auto_clear_delay: int = int(call.data.get("auto_clear_delay", 0))
 
         def _render_label() -> str:
             return Template(raw_label, hass).async_render(parse_result=False) if raw_label else ""
@@ -455,6 +460,8 @@ def _register_services(hass: HomeAssistant) -> None:
                 vt = _render_value_text()
                 if vt:
                     params["value_text"] = vt
+                if auto_clear_delay > 0:
+                    params["auto_clear_delay"] = auto_clear_delay
                 return params
 
             # Send current state immediately

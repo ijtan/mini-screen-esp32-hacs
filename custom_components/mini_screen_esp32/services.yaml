@@ -398,6 +398,22 @@ pin_sensor:
           step: 1
           mode: box
 
+    auto_clear_delay:
+      name: Auto-clear Delay
+      description: >-
+        Seconds to keep the display showing 100% before automatically returning
+        to the clock. Set to 0 (default) to stay on screen indefinitely.
+      required: false
+      default: 0
+      example: 10
+      selector:
+        number:
+          min: 0
+          max: 300
+          step: 1
+          unit_of_measurement: seconds
+          mode: box
+
     device_name:
       name: Device Name
       description: >-
@@ -471,6 +487,22 @@ pin_sensor_progress:
       example: "{{ states('sensor.temp') }}°C"
       selector:
         text:
+
+    auto_clear_delay:
+      name: Auto-clear Delay
+      description: >-
+        Seconds to keep the display showing 100% before automatically returning
+        to the clock. Set to 0 (default) to stay on screen indefinitely.
+      required: false
+      default: 0
+      example: 10
+      selector:
+        number:
+          min: 0
+          max: 300
+          step: 1
+          unit_of_measurement: seconds
+          mode: box
 
     device_name:
       name: Device Name
