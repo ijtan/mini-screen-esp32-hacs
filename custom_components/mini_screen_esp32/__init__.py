@@ -510,13 +510,16 @@ def _register_services(hass: HomeAssistant) -> None:
 
     # ── send_image ────────────────────────────────────────────────────────────
     async def handle_send_image(call: ServiceCall) -> None:
-        """Convert an image to a 1-bit bitmap and send to the display."""
+        """Convert an image (file path or URL) to a 1-bit bitmap and send to the display."""
         import io
         from PIL import Image
 
-        image_path: str = call.data["image_path"]
+        image_source: str = call.data.get("image_url") or call.data.get("image_path", "")
         dither: bool = bool(call.data.get("dither", True))
         device_name: str | None = call.data.get("device_name")
+
+        if not image_source:
+            raise HomeAssistantError("Either image_url or image_path must be provided")
 
         entries = _get_matching_entries(hass, device_name)
         if not entries:
@@ -526,13 +529,17 @@ def _register_services(hass: HomeAssistant) -> None:
             )
             return
 
-        # Load and convert image in executor to avoid blocking the event loop
-        def convert_image() -> bytes:
-            img = Image.open(image_path).convert("RGB")
+        # Fetch URL or load file — done in executor to avoid blocking
+        def load_and_convert() -> bytes:
+            if image_source.startswith("http://") or image_source.startswith("https://"):
+                import urllib.request
+                with urllib.request.urlopen(image_source, timeout=15) as resp:
+                    img = Image.open(io.BytesIO(resp.read())).convert("RGB")
+            else:
+                img = Image.open(image_source).convert("RGB")
             img = img.resize((128, 64), Image.LANCZOS)
             dither_mode = Image.Dither.FLOYDSTEINBERG if dither else Image.Dither.NONE
             img = img.convert("1", dither=dither_mode)
-            # Pack into raw bytes: each byte = 8 horizontal pixels, MSB first
             raw = bytearray(1024)
             for y in range(64):
                 for x in range(128):
@@ -544,9 +551,9 @@ def _register_services(hass: HomeAssistant) -> None:
             return bytes(raw)
 
         try:
-            bitmap_bytes = await hass.async_add_executor_job(convert_image)
+            bitmap_bytes = await hass.async_add_executor_job(load_and_convert)
         except Exception as err:
-            raise HomeAssistantError(f"Failed to convert image: {err}") from err
+            raise HomeAssistantError(f"Failed to load/convert image: {err}") from err
 
         timeout = aiohttp.ClientTimeout(total=15)
         for entry_data in entries:

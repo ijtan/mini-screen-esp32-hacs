@@ -1,9 +1,12 @@
 """Mini Screen ESP32 device actions for the HA automation editor."""
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 import voluptuous as vol
+
+_LOGGER = logging.getLogger(__name__)
 
 from homeassistant.const import CONF_DEVICE_ID, CONF_DOMAIN, CONF_TYPE
 from homeassistant.core import Context, HomeAssistant
@@ -26,6 +29,7 @@ ACTION_SET_BRIGHTNESS   = "set_brightness"
 ACTION_PIN_MESSAGE      = "pin_message"
 ACTION_SCROLL_MESSAGE   = "scroll_message"
 ACTION_SHOW_PROGRESS    = "show_progress"
+ACTION_SEND_IMAGE       = "send_image"
 
 _STYLE_MAP = {
     ACTION_SEND_NORMAL:      "normal",
@@ -52,6 +56,7 @@ _ALL_ACTIONS: list[tuple[str, str]] = [
     (ACTION_PIN_MESSAGE,       "Pin message"),
     (ACTION_SCROLL_MESSAGE,    "Scroll message"),
     (ACTION_SHOW_PROGRESS,     "Show progress bar"),
+    (ACTION_SEND_IMAGE,        "Send image"),
 ]
 
 ACTION_SCHEMA = vol.Schema(
@@ -122,6 +127,10 @@ async def async_get_action_capabilities(
     elif action_type == ACTION_SHOW_PROGRESS:
         fields[vol.Required("value")] = vol.All(int, vol.Range(min=0, max=100))
         fields[vol.Optional("label", default="")] = str
+
+    elif action_type == ACTION_SEND_IMAGE:
+        fields[vol.Required("image_url")] = str
+        fields[vol.Optional("dither", default=True)] = bool
 
     return {"extra_fields": vol.Schema(fields)}
 
@@ -216,6 +225,54 @@ async def async_call_action_from_config(
                 },
             )
         )
+        return
+
+    if action_type == ACTION_SEND_IMAGE:
+        image_url: str = config.get("image_url", "")
+        dither: bool = config.get("dither", True)
+        if not image_url:
+            return
+
+        async def _send_image_action() -> None:
+            import io
+            import urllib.request
+            from PIL import Image
+
+            def load_and_convert() -> bytes:
+                with urllib.request.urlopen(image_url, timeout=15) as resp:
+                    img = Image.open(io.BytesIO(resp.read())).convert("RGB")
+                img = img.resize((128, 64), Image.LANCZOS)
+                dither_mode = Image.Dither.FLOYDSTEINBERG if dither else Image.Dither.NONE
+                img = img.convert("1", dither=dither_mode)
+                raw = bytearray(1024)
+                for y in range(64):
+                    for x in range(128):
+                        pixel = img.getpixel((x, y))
+                        if pixel:
+                            byte_idx = (y * 128 + x) // 8
+                            bit_idx  = 7 - ((y * 128 + x) % 8)
+                            raw[byte_idx] |= (1 << bit_idx)
+                return bytes(raw)
+
+            try:
+                import aiohttp
+                bitmap_bytes = await hass.async_add_executor_job(load_and_convert)
+                timeout = aiohttp.ClientTimeout(total=15)
+                async with aiohttp.ClientSession(timeout=timeout) as session:
+                    async with session.post(
+                        f"http://{ip}/drawBitmap",
+                        data=bitmap_bytes,
+                        headers={"Content-Type": "application/octet-stream"},
+                    ) as response:
+                        if response.status >= 400:
+                            _LOGGER.warning(
+                                "Mini Screen ESP32 at %s returned HTTP %s for /drawBitmap",
+                                ip, response.status,
+                            )
+            except Exception as err:
+                _LOGGER.warning("send_image action failed for %s: %s", ip, err)
+
+        hass.async_create_task(_send_image_action())
         return
 
 

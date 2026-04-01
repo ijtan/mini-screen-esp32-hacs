@@ -435,13 +435,22 @@ send_image:
   description: >-
     Convert a PNG or JPG image to a 1-bit monochrome bitmap and display it on
     the screen. The image is resized to 128×64 by Home Assistant before sending.
+    Provide either image_url or image_path.
   fields:
+    image_url:
+      name: Image URL
+      description: >-
+        URL of the image to fetch and display (http/https).
+      required: false
+      example: "https://example.com/image.png"
+      selector:
+        text:
     image_path:
       name: Image Path
       description: >-
         Absolute path to the image file on the Home Assistant server
         (e.g. /config/www/myimage.png).
-      required: true
+      required: false
       example: "/config/www/myimage.png"
       selector:
         text:
