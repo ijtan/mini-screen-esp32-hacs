@@ -438,10 +438,7 @@ def _register_services(hass: HomeAssistant) -> None:
 
         auto_clear_delay: int = int(call.data.get("auto_clear_delay", 0))
         value_font_size: int = int(call.data.get("value_font_size", 1))
-        warn_enabled: bool = bool(call.data.get("warn_enabled", False))
-        warn_threshold: int = max(0, min(100, int(call.data.get("warn_threshold", 80))))
-        crit_enabled: bool = bool(call.data.get("crit_enabled", False))
-        crit_threshold: int = max(0, min(100, int(call.data.get("crit_threshold", 95))))
+        crit_threshold: int = max(0, min(100, int(call.data.get("crit_threshold", 0))))
 
         params: dict[str, Any] = {"value": value, "label": label}
         if value_text:
@@ -450,9 +447,7 @@ def _register_services(hass: HomeAssistant) -> None:
             params["auto_clear_delay"] = auto_clear_delay
         if value_font_size == 2:
             params["value_font_size"] = 2
-        if warn_enabled:
-            params["warn"] = warn_threshold
-        if crit_enabled:
+        if crit_threshold > 0:
             params["crit"] = crit_threshold
 
         for entry_data in entries:
@@ -564,10 +559,7 @@ def _register_services(hass: HomeAssistant) -> None:
         value_type: str = call.data.get("value_type", "percentage")
         auto_clear_delay: int = int(call.data.get("auto_clear_delay", 0))
         value_font_size: int = int(call.data.get("value_font_size", 1))
-        warn_enabled: bool = bool(call.data.get("warn_enabled", False))
-        warn_threshold_raw: float = float(call.data.get("warn_threshold", 80))
-        crit_enabled: bool = bool(call.data.get("crit_enabled", False))
-        crit_threshold_raw: float = float(call.data.get("crit_threshold", 95))
+        crit_threshold_raw: float = float(call.data.get("crit_threshold", 0))
 
         def _render_label() -> str:
             return Template(raw_label, hass).async_render(parse_result=False) if raw_label else ""
@@ -633,10 +625,9 @@ def _register_services(hass: HomeAssistant) -> None:
                     params["auto_clear_delay"] = auto_clear_delay
                 if value_font_size == 2:
                     params["value_font_size"] = 2
-                if warn_enabled:
-                    params["warn"] = _threshold_to_pct(warn_threshold_raw)
-                if crit_enabled:
-                    params["crit"] = _threshold_to_pct(crit_threshold_raw)
+                crit_pct = _threshold_to_pct(crit_threshold_raw)
+                if crit_pct > 0:
+                    params["crit"] = crit_pct
                 return params
 
             # Send current state immediately

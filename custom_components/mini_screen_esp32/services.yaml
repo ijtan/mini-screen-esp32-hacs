@@ -350,45 +350,13 @@ show_progress:
       selector:
         text:
 
-    warn_enabled:
-      name: Warning Threshold Enabled
-      description: Enable the warning threshold (striped bar when value is at or above the threshold).
-      required: false
-      default: false
-      selector:
-        boolean:
-
-    warn_threshold:
-      name: Warning Threshold (%)
-      description: >-
-        Percentage at or above which the bar switches to a striped pattern.
-        Only used when Warning Threshold Enabled is true.
-      required: false
-      default: 80
-      example: 80
-      selector:
-        number:
-          min: 0
-          max: 100
-          step: 1
-          unit_of_measurement: "%"
-          mode: slider
-
-    crit_enabled:
-      name: Critical Threshold Enabled
-      description: Enable the critical threshold (flashing inverted screen when value is at or above the threshold).
-      required: false
-      default: false
-      selector:
-        boolean:
-
     crit_threshold:
       name: Critical Threshold (%)
       description: >-
-        Percentage at or above which the display flashes (inverts on/off every 500 ms).
-        Only used when Critical Threshold Enabled is true.
+        When set (0–100), the progress bar blinks on/off every 500 ms once the
+        value reaches or exceeds this percentage. Set to 0 to disable.
       required: false
-      default: 95
+      default: 0
       example: 95
       selector:
         number:
@@ -605,46 +573,14 @@ pin_sensor_progress:
           step: 1
           mode: box
 
-    warn_enabled:
-      name: Warning Threshold Enabled
-      description: Enable the warning threshold (striped bar when value reaches or exceeds the threshold).
-      required: false
-      default: false
-      selector:
-        boolean:
-
-    warn_threshold:
-      name: Warning Threshold
-      description: >-
-        Threshold that triggers the striped bar. In percentage mode enter 0–100.
-        In raw mode enter the raw sensor value (same units as the sensor).
-        Only used when Warning Threshold Enabled is true.
-      required: false
-      default: 80
-      example: 80
-      selector:
-        number:
-          min: -10000
-          max: 10000
-          step: 0.1
-          mode: box
-
-    crit_enabled:
-      name: Critical Threshold Enabled
-      description: Enable the critical threshold (flashing inverted screen when value reaches or exceeds the threshold).
-      required: false
-      default: false
-      selector:
-        boolean:
-
     crit_threshold:
       name: Critical Threshold
       description: >-
-        Threshold that triggers the flashing display. In percentage mode enter 0–100.
-        In raw mode enter the raw sensor value (same units as the sensor).
-        Only used when Critical Threshold Enabled is true.
+        When set (non-zero), the bar blinks on/off every 500 ms once the value
+        reaches or exceeds this threshold. In percentage mode enter 0–100 (0 = off).
+        In raw mode enter the raw sensor value (0 = off).
       required: false
-      default: 95
+      default: 0
       example: 95
       selector:
         number:
