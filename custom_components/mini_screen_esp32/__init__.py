@@ -11,7 +11,12 @@ import aiohttp
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import Event, HomeAssistant, ServiceCall, callback
 from homeassistant.exceptions import HomeAssistantError
-from homeassistant.helpers.event import async_track_state_change_event, async_track_time_change, async_track_time_interval
+from homeassistant.helpers.event import (
+    async_call_later,
+    async_track_state_change_event,
+    async_track_time_change,
+    async_track_time_interval,
+)
 
 from .const import (
     CONF_DIM_ENABLED, CONF_DIM_END, CONF_DIM_LEVEL, CONF_DIM_RESTORE, CONF_DIM_START,
@@ -51,6 +56,43 @@ _ALL_SERVICES = [
     "unpin_sensor",
     "send_image",
 ]
+
+
+def _cancel_monitor_resume(entry_data: dict[str, Any]) -> None:
+    """Cancel any pending automatic monitor resume."""
+    unsub = entry_data.get("monitor_resume_unsub")
+    if unsub is not None:
+        unsub()
+        entry_data["monitor_resume_unsub"] = None
+
+
+def _set_monitor_paused(
+    hass: HomeAssistant,
+    entry_data: dict[str, Any],
+    paused: bool,
+    *,
+    resume_after: float | None = None,
+) -> None:
+    """Pause or resume monitored sensor rotation, optionally auto-resuming later."""
+    _cancel_monitor_resume(entry_data)
+    entry_data["monitor_paused"] = paused
+
+    if not paused or resume_after is None or resume_after <= 0:
+        return
+
+    @callback
+    def _resume_monitor(_now: Any) -> None:
+        entry_data["monitor_paused"] = False
+        entry_data["monitor_resume_unsub"] = None
+
+    entry_data["monitor_resume_unsub"] = async_call_later(
+        hass, resume_after, _resume_monitor
+    )
+
+
+def _set_display_owner(entry_data: dict[str, Any], owner: str | None) -> None:
+    """Track which feature most recently took over the display."""
+    entry_data["display_owner"] = owner
 
 
 def _apply_dim_schedule(
@@ -125,19 +167,14 @@ def _apply_monitor(
 
     opts = entry.options
     if not opts.get(CONF_MONITOR_ENABLED, False):
+        if entry_data.get("display_owner") == "monitor":
+            _set_display_owner(entry_data, None)
+            hass.async_create_task(_call_device(ip=entry_data["ip_address"], path="/unpin"))
+        entry_data["monitor_had_active"] = False
         return
 
     interval = max(1, int(opts.get(CONF_MONITOR_INTERVAL, 10)))
     ip: str = entry_data["ip_address"]
-
-    # Grab the list of monitored sensor subentries
-    monitor_subentries = [
-        s.data
-        for s in entry.subentries.values()
-        if s.subentry_type == SUBENTRY_TYPE_MONITOR
-    ]
-    if not monitor_subentries:
-        return
 
     entry_data["monitor_index"] = 0
 
@@ -152,6 +189,12 @@ def _apply_monitor(
             for s in entry.subentries.values()
             if s.subentry_type == SUBENTRY_TYPE_MONITOR
         ]
+        if not sensors:
+            if entry_data.get("monitor_had_active") and entry_data.get("display_owner") == "monitor":
+                _set_display_owner(entry_data, None)
+                hass.async_create_task(_call_device(ip=ip, path="/unpin"))
+            entry_data["monitor_had_active"] = False
+            return
 
         active = []
         for cfg in sensors:
@@ -170,8 +213,13 @@ def _apply_monitor(
                 active.append(cfg)
 
         if not active:
-            hass.async_create_task(_call_device(ip=ip, path="/unpin"))
+            if entry_data.get("monitor_had_active") and entry_data.get("display_owner") == "monitor":
+                _set_display_owner(entry_data, None)
+                hass.async_create_task(_call_device(ip=ip, path="/unpin"))
+            entry_data["monitor_had_active"] = False
             return
+
+        entry_data["monitor_had_active"] = True
 
         idx = entry_data.get("monitor_index", 0) % len(active)
         entry_data["monitor_index"] = (idx + 1) % len(active)
@@ -200,6 +248,7 @@ def _apply_monitor(
             value_font_size=int(cfg.get("value_font_size", 1)),
             crit_pct=crit_pct,
         )
+        _set_display_owner(entry_data, "monitor")
         hass.async_create_task(_call_device(ip=ip, path="/showProgress", params=params))
 
     entry_data["monitor_unsub"] = async_track_time_interval(
@@ -229,8 +278,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         "dim_unsub_start": None,
         "dim_unsub_end": None,
         "monitor_unsub": None,
+        "monitor_resume_unsub": None,
         "monitor_index": 0,
+        "monitor_had_active": False,
         "monitor_paused": False,
+        "display_owner": None,
     }
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
@@ -321,7 +373,13 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Cancel sensor and dim subscriptions if active
     entry_data = hass.data.get(DOMAIN, {}).get(entry.entry_id)
     if entry_data is not None:
-        for key in ("sensor_unsub", "dim_unsub_start", "dim_unsub_end", "monitor_unsub"):
+        for key in (
+            "sensor_unsub",
+            "dim_unsub_start",
+            "dim_unsub_end",
+            "monitor_unsub",
+            "monitor_resume_unsub",
+        ):
             unsub = entry_data.get(key)
             if unsub is not None:
                 unsub()
@@ -365,7 +423,9 @@ def _register_services(hass: HomeAssistant) -> None:
         for entry_data in entries:
             # Non-updateable styles take over the display — pause monitor
             if style != "updateable":
-                entry_data["monitor_paused"] = True
+                resume_after = duration if style in {"normal", "big", "inverted", "inverted_big"} else 5
+                _set_monitor_paused(hass, entry_data, True, resume_after=resume_after)
+            _set_display_owner(entry_data, "send_message")
             hass.async_create_task(
                 _call_device(
                     ip=entry_data["ip_address"],
@@ -413,6 +473,8 @@ def _register_services(hass: HomeAssistant) -> None:
             if unsub is not None:
                 unsub()
                 entry_data["sensor_unsub"] = None
+            _set_monitor_paused(hass, entry_data, False)
+            _set_display_owner(entry_data, None)
             hass.async_create_task(
                 _call_device(ip=entry_data["ip_address"], path="/clear")
             )
@@ -432,7 +494,8 @@ def _register_services(hass: HomeAssistant) -> None:
             return
 
         for entry_data in entries:
-            entry_data["monitor_paused"] = False
+            _set_monitor_paused(hass, entry_data, False)
+            _set_display_owner(entry_data, None)
             hass.async_create_task(
                 _call_device(ip=entry_data["ip_address"], path="/unpin")
             )
@@ -479,7 +542,8 @@ def _register_services(hass: HomeAssistant) -> None:
             return
 
         for entry_data in entries:
-            entry_data["monitor_paused"] = True
+            _set_monitor_paused(hass, entry_data, True)
+            _set_display_owner(entry_data, "pin_message")
             hass.async_create_task(
                 _call_device(
                     ip=entry_data["ip_address"],
@@ -506,7 +570,8 @@ def _register_services(hass: HomeAssistant) -> None:
             return
 
         for entry_data in entries:
-            entry_data["monitor_paused"] = True
+            _set_monitor_paused(hass, entry_data, True)
+            _set_display_owner(entry_data, "scroll_message")
             hass.async_create_task(
                 _call_device(
                     ip=entry_data["ip_address"],
@@ -560,6 +625,7 @@ def _register_services(hass: HomeAssistant) -> None:
             params["crit"] = crit_threshold
 
         for entry_data in entries:
+            _set_display_owner(entry_data, "show_progress")
             hass.async_create_task(
                 _call_device(
                     ip=entry_data["ip_address"],
@@ -605,11 +671,13 @@ def _register_services(hass: HomeAssistant) -> None:
             if existing_unsub is not None:
                 existing_unsub()
                 entry_data["sensor_unsub"] = None
+            _set_monitor_paused(hass, entry_data, True)
 
             # Send the current state immediately
             current_state = hass.states.get(entity_id)
             if current_state is not None:
                 msg = _format_message(current_state.state, template)
+                _set_display_owner(entry_data, "pin_sensor")
                 hass.async_create_task(
                     _call_device(
                         ip=entry_data["ip_address"],
@@ -630,6 +698,7 @@ def _register_services(hass: HomeAssistant) -> None:
                 if new_state is None:
                     return
                 msg = _format_message(new_state.state, _template)
+                _set_display_owner(_entry_data, "pin_sensor")
                 hass.async_create_task(
                     _call_device(
                         ip=_entry_data["ip_address"],
@@ -702,10 +771,12 @@ def _register_services(hass: HomeAssistant) -> None:
             if existing_unsub is not None:
                 existing_unsub()
                 entry_data["sensor_unsub"] = None
+            _set_monitor_paused(hass, entry_data, True)
 
             # Send current state immediately
             current_state = hass.states.get(entity_id)
             if current_state is not None:
+                _set_display_owner(entry_data, "pin_sensor_progress")
                 hass.async_create_task(
                     _call_device(
                         ip=entry_data["ip_address"],
@@ -723,6 +794,7 @@ def _register_services(hass: HomeAssistant) -> None:
                 new_state = event.data.get("new_state")
                 if new_state is None:
                     return
+                _set_display_owner(_entry_data, "pin_sensor_progress")
                 hass.async_create_task(
                     _call_device(
                         ip=_entry_data["ip_address"],
@@ -755,6 +827,8 @@ def _register_services(hass: HomeAssistant) -> None:
             if unsub is not None:
                 unsub()
                 entry_data["sensor_unsub"] = None
+            _set_monitor_paused(hass, entry_data, False)
+            _set_display_owner(entry_data, None)
             hass.async_create_task(
                 _call_device(ip=entry_data["ip_address"], path="/unpin")
             )
@@ -808,6 +882,8 @@ def _register_services(hass: HomeAssistant) -> None:
 
         timeout = aiohttp.ClientTimeout(total=15)
         for entry_data in entries:
+            _set_monitor_paused(hass, entry_data, True)
+            _set_display_owner(entry_data, "send_image")
             async def _post(ip: str = entry_data["ip_address"]) -> None:
                 try:
                     async with aiohttp.ClientSession(timeout=timeout) as session:
