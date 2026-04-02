@@ -31,7 +31,7 @@
       "error": {
         "invalid_monitor_config": "Check the monitored sensor settings and try again.",
         "invalid_range": "Maximum value must be greater than minimum value.",
-        "threshold_range": "Alert threshold must be between 0 and 100."
+        "threshold_range": "In Percentage mode, alert threshold must be between 0 and 100."
       },
       "step": {
         "user": {
@@ -54,7 +54,7 @@
             "max_value": "Sensor value that maps to 100 % on the bar.",
             "value_type": "Show percentage or the raw sensor value below the bar.",
             "unit": "Unit suffix for raw value display. Leave blank to use the entity's own unit.",
-            "threshold": "The bar blinks when the value reaches or exceeds this threshold (as a %). Set to 0 to always show without alert.",
+            "threshold": "Show the sensor when it reaches or exceeds this threshold. In Percentage mode enter 0-100. In Raw value mode enter the raw sensor value. Set to 0 to always show without alert.",
             "value_font_size": "Font size for the value text shown below the bar."
           }
         },
@@ -78,7 +78,7 @@
             "max_value": "Sensor value that maps to 100 % on the bar.",
             "value_type": "Show percentage or the raw sensor value below the bar.",
             "unit": "Unit suffix for raw value display. Leave blank to use the entity's own unit.",
-            "threshold": "The bar blinks when the value reaches or exceeds this threshold (as a %). Set to 0 to always show without alert.",
+            "threshold": "Show the sensor when it reaches or exceeds this threshold. In Percentage mode enter 0-100. In Raw value mode enter the raw sensor value. Set to 0 to always show without alert.",
             "value_font_size": "Font size for the value text shown below the bar."
           }
         }

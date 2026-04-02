@@ -203,7 +203,7 @@ class MiniScreenMonitorSubentryFlow(ConfigSubentryFlow):
                     errors["base"] = "invalid_monitor_config"
                 elif max_value <= min_value:
                     errors["base"] = "invalid_range"
-                elif not 0 <= threshold <= 100:
+                elif value_type == "percentage" and not 0 <= threshold <= 100:
                     errors["base"] = "threshold_range"
                 elif value_font_size not in {1, 2}:
                     errors["base"] = "invalid_monitor_config"

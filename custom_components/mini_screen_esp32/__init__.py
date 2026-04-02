@@ -159,11 +159,12 @@ def _apply_monitor(
     entry_data: dict[str, Any],
 ) -> None:
     """Set up (or restart) the sensor monitor rotation for one entry."""
-    # Cancel existing monitor timer
-    unsub = entry_data.get("monitor_unsub")
-    if unsub is not None:
-        unsub()
-        entry_data["monitor_unsub"] = None
+    # Cancel existing monitor timer/listener
+    for key in ("monitor_unsub", "monitor_state_unsub"):
+        unsub = entry_data.get(key)
+        if unsub is not None:
+            unsub()
+            entry_data[key] = None
 
     opts = entry.options
     if not opts.get(CONF_MONITOR_ENABLED, False):
@@ -179,7 +180,7 @@ def _apply_monitor(
     entry_data["monitor_index"] = 0
 
     @callback
-    def _monitor_tick(_now: Any) -> None:
+    def _refresh_monitor(*, advance_index: bool) -> None:
         if entry_data.get("monitor_paused"):
             return
 
@@ -202,14 +203,16 @@ def _apply_monitor(
             state = hass.states.get(entity_id)
             if state is None:
                 continue
-            threshold = float(cfg.get("threshold", 0))
-            if threshold <= 0:
+            threshold_raw = float(cfg.get("threshold", 0))
+            if threshold_raw <= 0:
                 active.append(cfg)  # no threshold → always shown
                 continue
             min_v = float(cfg.get("min_value", 0))
             max_v = float(cfg.get("max_value", 100))
+            value_type = cfg.get("value_type", "percentage")
             pct = state_to_percent(state.state, min_v, max_v)
-            if pct >= threshold:
+            trigger_pct = threshold_to_pct(threshold_raw, value_type, min_v, max_v)
+            if pct >= trigger_pct:
                 active.append(cfg)
 
         if not active:
@@ -222,7 +225,8 @@ def _apply_monitor(
         entry_data["monitor_had_active"] = True
 
         idx = entry_data.get("monitor_index", 0) % len(active)
-        entry_data["monitor_index"] = (idx + 1) % len(active)
+        if advance_index:
+            entry_data["monitor_index"] = (idx + 1) % len(active)
         cfg = active[idx]
 
         entity_id = cfg.get("entity_id", "")
@@ -237,8 +241,12 @@ def _apply_monitor(
         label = cfg.get("label", "").strip() or default_label
         value_type: str = cfg.get("value_type", "percentage")
         vt = render_value_text(hass, state.state, entity_id, value_type, cfg.get("unit", ""), None)
-        threshold = float(cfg.get("threshold", 0))
-        crit_pct = max(0, min(100, int(round(threshold)))) if threshold > 0 else 0
+        threshold_raw = float(cfg.get("threshold", 0))
+        crit_pct = (
+            threshold_to_pct(threshold_raw, value_type, min_v, max_v)
+            if threshold_raw > 0
+            else 0
+        )
 
         params = build_progress_params(
             pct=bar_val,
@@ -251,9 +259,32 @@ def _apply_monitor(
         _set_display_owner(entry_data, "monitor")
         hass.async_create_task(_call_device(ip=ip, path="/showProgress", params=params))
 
+    @callback
+    def _monitor_tick(_now: Any) -> None:
+        _refresh_monitor(advance_index=True)
+
+    monitor_entity_ids = list(
+        {
+            s.data.get("entity_id", "")
+            for s in entry.subentries.values()
+            if s.subentry_type == SUBENTRY_TYPE_MONITOR and s.data.get("entity_id", "")
+        }
+    )
+
+    @callback
+    def _on_monitor_state_change(event: Event) -> None:
+        if event.data.get("new_state") is None:
+            return
+        _refresh_monitor(advance_index=False)
+
     entry_data["monitor_unsub"] = async_track_time_interval(
         hass, _monitor_tick, timedelta(seconds=interval)
     )
+    if monitor_entity_ids:
+        entry_data["monitor_state_unsub"] = async_track_state_change_event(
+            hass, monitor_entity_ids, _on_monitor_state_change
+        )
+        _refresh_monitor(advance_index=False)
     _LOGGER.debug("Mini Screen ESP32 monitor started for %s (%ds interval)", ip, interval)
 
 
@@ -278,6 +309,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         "dim_unsub_start": None,
         "dim_unsub_end": None,
         "monitor_unsub": None,
+        "monitor_state_unsub": None,
         "monitor_resume_unsub": None,
         "monitor_index": 0,
         "monitor_had_active": False,
@@ -378,6 +410,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             "dim_unsub_start",
             "dim_unsub_end",
             "monitor_unsub",
+            "monitor_state_unsub",
             "monitor_resume_unsub",
         ):
             unsub = entry_data.get(key)
