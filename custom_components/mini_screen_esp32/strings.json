@@ -22,6 +22,64 @@
       "already_configured": "This device is already configured."
     }
   },
+  "config_subentries": {
+    "monitored_sensor": {
+      "initiate_flow": {
+        "user": "Add monitored sensor"
+      },
+      "entry_type": "Monitored sensor",
+      "step": {
+        "user": {
+          "title": "Add monitored sensor",
+          "description": "Configure a sensor to show on the display when its value exceeds the threshold.",
+          "data": {
+            "entity_id": "Entity",
+            "label": "Label",
+            "min_value": "Minimum value",
+            "max_value": "Maximum value",
+            "value_type": "Value display",
+            "unit": "Unit",
+            "threshold": "Alert threshold",
+            "value_font_size": "Value text size"
+          },
+          "data_description": {
+            "entity_id": "The sensor entity to track.",
+            "label": "Label shown above the progress bar. Defaults to the entity name.",
+            "min_value": "Sensor value that maps to 0 % on the bar.",
+            "max_value": "Sensor value that maps to 100 % on the bar.",
+            "value_type": "Show percentage or the raw sensor value below the bar.",
+            "unit": "Unit suffix for raw value display. Leave blank to use the entity's own unit.",
+            "threshold": "The bar blinks when the value reaches or exceeds this threshold (as a %). Set to 0 to always show without alert.",
+            "value_font_size": "Font size for the value text shown below the bar."
+          }
+        },
+        "reconfigure": {
+          "title": "Edit monitored sensor",
+          "description": "Update the settings for this monitored sensor.",
+          "data": {
+            "entity_id": "Entity",
+            "label": "Label",
+            "min_value": "Minimum value",
+            "max_value": "Maximum value",
+            "value_type": "Value display",
+            "unit": "Unit",
+            "threshold": "Alert threshold",
+            "value_font_size": "Value text size"
+          },
+          "data_description": {
+            "entity_id": "The sensor entity to track.",
+            "label": "Label shown above the progress bar. Defaults to the entity name.",
+            "min_value": "Sensor value that maps to 0 % on the bar.",
+            "max_value": "Sensor value that maps to 100 % on the bar.",
+            "value_type": "Show percentage or the raw sensor value below the bar.",
+            "unit": "Unit suffix for raw value display. Leave blank to use the entity's own unit.",
+            "threshold": "The bar blinks when the value reaches or exceeds this threshold (as a %). Set to 0 to always show without alert.",
+            "value_font_size": "Font size for the value text shown below the bar."
+          }
+        }
+      }
+    }
+  },
   "device_automation": {
     "action_type": {
       "send_normal": "Display message (small)",
@@ -48,21 +106,25 @@
     "step": {
       "init": {
         "title": "Mini Screen ESP32 Settings",
-        "description": "Update the IP address or configure the auto-dim schedule.",
+        "description": "Update the IP address, configure the auto-dim schedule, or enable sensor monitoring.",
         "data": {
           "ip_address": "IP Address",
           "dim_enabled": "Enable auto-dim schedule",
           "dim_start": "Dim time (HH:MM)",
           "dim_end": "Restore time (HH:MM)",
           "dim_level": "Dim brightness (0–255)",
-          "dim_restore_level": "Restore brightness (0–255)"
+          "dim_restore_level": "Restore brightness (0–255)",
+          "monitor_enabled": "Enable sensor monitoring",
+          "monitor_interval": "Rotation interval (seconds)"
         },
         "data_description": {
           "ip_address": "The local IP address of the ESP device (e.g. 192.168.1.50).",
           "dim_start": "Time to dim the display each day, 24-hour format (e.g. 22:00).",
           "dim_end": "Time to restore full brightness each day, 24-hour format (e.g. 07:00).",
           "dim_level": "Brightness level during the dim period.",
-          "dim_restore_level": "Brightness level to restore after the dim period."
+          "dim_restore_level": "Brightness level to restore after the dim period.",
+          "monitor_enabled": "Cycle through monitored sensors when any threshold is exceeded. Add sensors using the + button on the device page.",
+          "monitor_interval": "How long each sensor is shown before rotating to the next (1–300 s)."
         }
       }
     },

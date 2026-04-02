@@ -7,15 +7,17 @@ from typing import Any
 
 import aiohttp
 
+from datetime import timedelta
+
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import Event, HomeAssistant, ServiceCall, callback
 from homeassistant.exceptions import HomeAssistantError
-from homeassistant.helpers.event import async_track_state_change_event, async_track_time_change
+from homeassistant.helpers.event import async_track_state_change_event, async_track_time_change, async_track_time_interval
 
 _LOGGER = logging.getLogger(__name__)
 
 DOMAIN = "mini_screen_esp32"
-PLATFORMS = ["notify", "button"]
+PLATFORMS = ["notify", "button", "switch"]
 
 CONF_IP_ADDRESS = "ip_address"
 CONF_NAME = "name"
@@ -26,6 +28,13 @@ CONF_DIM_START    = "dim_start"
 CONF_DIM_END      = "dim_end"
 CONF_DIM_LEVEL    = "dim_level"
 CONF_DIM_RESTORE  = "dim_restore_level"
+
+# Options keys for monitor
+CONF_MONITOR_ENABLED  = "monitor_enabled"
+CONF_MONITOR_INTERVAL = "monitor_interval"
+
+# Subentry type key
+SUBENTRY_TYPE_MONITOR = "monitored_sensor"
 
 # Style -> endpoint mapping
 STYLE_ENDPOINTS: dict[str, str] = {
@@ -114,6 +123,122 @@ def _apply_dim_schedule(
     )
 
 
+def _apply_monitor(
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+    entry_data: dict[str, Any],
+) -> None:
+    """Set up (or restart) the sensor monitor rotation for one entry."""
+    # Cancel existing monitor timer
+    unsub = entry_data.get("monitor_unsub")
+    if unsub is not None:
+        unsub()
+        entry_data["monitor_unsub"] = None
+
+    opts = entry.options
+    if not opts.get(CONF_MONITOR_ENABLED, False):
+        return
+
+    interval = max(1, int(opts.get(CONF_MONITOR_INTERVAL, 10)))
+    ip: str = entry_data["ip_address"]
+
+    # Grab the list of monitored sensor subentries
+    monitor_subentries = [
+        s.data
+        for s in entry.subentries.values()
+        if s.subentry_type == SUBENTRY_TYPE_MONITOR
+    ]
+    if not monitor_subentries:
+        return
+
+    entry_data["monitor_index"] = 0
+
+    def _to_pct(raw: str, cfg: dict) -> float:
+        val = float(raw)
+        min_v = float(cfg.get("min_value", 0))
+        max_v = float(cfg.get("max_value", 100))
+        span = max_v - min_v
+        if span == 0:
+            return 0.0
+        return (val - min_v) / span * 100.0
+
+    @callback
+    def _monitor_tick(_now: Any) -> None:
+        if entry_data.get("monitor_paused"):
+            return
+
+        # Re-read subentries each tick so additions/removals are picked up
+        sensors = [
+            s.data
+            for s in entry.subentries.values()
+            if s.subentry_type == SUBENTRY_TYPE_MONITOR
+        ]
+
+        active = []
+        for cfg in sensors:
+            entity_id: str = cfg.get("entity_id", "")
+            state = hass.states.get(entity_id)
+            if state is None:
+                continue
+            threshold = float(cfg.get("threshold", 0))
+            if threshold <= 0:
+                active.append(cfg)  # no threshold → always shown
+                continue
+            try:
+                pct = _to_pct(state.state, cfg)
+            except (ValueError, TypeError):
+                continue
+            if pct >= threshold:
+                active.append(cfg)
+
+        if not active:
+            hass.async_create_task(_call_device(ip=ip, path="/unpin"))
+            return
+
+        idx = entry_data.get("monitor_index", 0) % len(active)
+        entry_data["monitor_index"] = (idx + 1) % len(active)
+        cfg = active[idx]
+
+        entity_id = cfg.get("entity_id", "")
+        state = hass.states.get(entity_id)
+        if state is None:
+            return
+
+        try:
+            pct = _to_pct(state.state, cfg)
+        except (ValueError, TypeError):
+            return
+
+        bar_val = max(0, min(100, int(round(pct))))
+        default_label = entity_id.split(".")[-1].replace("_", " ").title()
+        label = cfg.get("label", "").strip() or default_label
+
+        params: dict[str, Any] = {"value": bar_val, "label": label}
+
+        value_type: str = cfg.get("value_type", "percentage")
+        if value_type == "raw":
+            unit = cfg.get("unit", "").strip()
+            if not unit:
+                s = hass.states.get(entity_id)
+                unit = (s.attributes.get("unit_of_measurement", "") if s else "")
+            params["value_text"] = f"{state.state} {unit}".strip()
+
+        vfs = int(cfg.get("value_font_size", 1))
+        if vfs == 2:
+            params["value_font_size"] = 2
+
+        threshold = float(cfg.get("threshold", 0))
+        if threshold > 0:
+            params["crit"] = max(0, min(100, int(round(threshold))))
+
+        hass.async_create_task(_call_device(ip=ip, path="/showProgress", params=params))
+
+    entry_data["monitor_unsub"] = async_track_time_interval(
+        hass, _monitor_tick, timedelta(seconds=interval)
+    )
+    _LOGGER.debug("Mini Screen ESP32 monitor started for %s (%ds interval)", ip, interval)
+
+
 async def async_setup(hass: HomeAssistant, config: dict) -> bool:
     """Set up the Mini Screen ESP32 component."""
     hass.data.setdefault(DOMAIN, {})
@@ -134,6 +259,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         "sensor_unsub": None,
         "dim_unsub_start": None,
         "dim_unsub_end": None,
+        "monitor_unsub": None,
+        "monitor_index": 0,
+        "monitor_paused": False,
     }
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
@@ -175,7 +303,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         )
     )
 
-    # Re-apply dim schedule when options are updated via the UI
+    # Start sensor monitor if enabled
+    _apply_monitor(hass, entry, entry_data)
+
+    # Re-apply dim schedule and monitor when options are updated via the UI
     entry.async_on_unload(entry.add_update_listener(_async_options_updated))
 
     return True
@@ -195,6 +326,9 @@ async def _async_options_updated(hass: HomeAssistant, entry: ConfigEntry) -> Non
 
     # Update HA-side time listeners
     _apply_dim_schedule(hass, entry_data, enabled, start_str, end_str, dim_level, restore)
+
+    # Restart monitor with new settings
+    _apply_monitor(hass, entry, entry_data)
 
     # Also push to firmware so it persists on device (survives HA being down)
     ip = entry_data["ip_address"]
@@ -218,7 +352,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Cancel sensor and dim subscriptions if active
     entry_data = hass.data.get(DOMAIN, {}).get(entry.entry_id)
     if entry_data is not None:
-        for key in ("sensor_unsub", "dim_unsub_start", "dim_unsub_end"):
+        for key in ("sensor_unsub", "dim_unsub_start", "dim_unsub_end", "monitor_unsub"):
             unsub = entry_data.get(key)
             if unsub is not None:
                 unsub()
@@ -260,6 +394,9 @@ def _register_services(hass: HomeAssistant) -> None:
             return
 
         for entry_data in entries:
+            # Non-updateable styles take over the display — pause monitor
+            if style != "updateable":
+                entry_data["monitor_paused"] = True
             hass.async_create_task(
                 _call_device(
                     ip=entry_data["ip_address"],
@@ -326,6 +463,7 @@ def _register_services(hass: HomeAssistant) -> None:
             return
 
         for entry_data in entries:
+            entry_data["monitor_paused"] = False
             hass.async_create_task(
                 _call_device(ip=entry_data["ip_address"], path="/unpin")
             )
@@ -372,6 +510,7 @@ def _register_services(hass: HomeAssistant) -> None:
             return
 
         for entry_data in entries:
+            entry_data["monitor_paused"] = True
             hass.async_create_task(
                 _call_device(
                     ip=entry_data["ip_address"],
@@ -398,6 +537,7 @@ def _register_services(hass: HomeAssistant) -> None:
             return
 
         for entry_data in entries:
+            entry_data["monitor_paused"] = True
             hass.async_create_task(
                 _call_device(
                     ip=entry_data["ip_address"],

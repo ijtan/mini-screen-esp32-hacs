@@ -7,12 +7,13 @@ from typing import Any
 import aiohttp
 import voluptuous as vol
 
-from homeassistant.config_entries import ConfigEntry, ConfigFlow, ConfigFlowResult, OptionsFlow
+from homeassistant.config_entries import ConfigEntry, ConfigFlow, ConfigFlowResult, ConfigSubentryFlow, OptionsFlow, SubentryFlowResult
 from homeassistant.core import callback
 
 from . import (
     CONF_IP_ADDRESS, CONF_NAME, DOMAIN,
     CONF_DIM_ENABLED, CONF_DIM_START, CONF_DIM_END, CONF_DIM_LEVEL, CONF_DIM_RESTORE,
+    CONF_MONITOR_ENABLED, CONF_MONITOR_INTERVAL, SUBENTRY_TYPE_MONITOR,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -88,6 +89,14 @@ class MiniScreenESP32ConfigFlow(ConfigFlow, domain=DOMAIN):
         """Return the options flow handler."""
         return MiniScreenESP32OptionsFlow()
 
+    @classmethod
+    @callback
+    def async_get_supported_subentry_types(
+        cls, config_entry: ConfigEntry
+    ) -> dict[str, type[ConfigSubentryFlow]]:
+        """Return supported subentry types."""
+        return {SUBENTRY_TYPE_MONITOR: MiniScreenMonitorSubentryFlow}
+
 
 class MiniScreenESP32OptionsFlow(OptionsFlow):
     """Handle options flow for Mini Screen ESP32 (edit IP after setup)."""
@@ -113,13 +122,14 @@ class MiniScreenESP32OptionsFlow(OptionsFlow):
                     self.config_entry,
                     data={**self.config_entry.data, CONF_IP_ADDRESS: new_ip},
                 )
-                # Save dim schedule settings in options
                 return self.async_create_entry(title="", data={
-                    CONF_DIM_ENABLED:  user_input.get(CONF_DIM_ENABLED, False),
-                    CONF_DIM_START:    user_input.get(CONF_DIM_START, "22:00"),
-                    CONF_DIM_END:      user_input.get(CONF_DIM_END, "07:00"),
-                    CONF_DIM_LEVEL:    user_input.get(CONF_DIM_LEVEL, 5),
-                    CONF_DIM_RESTORE:  user_input.get(CONF_DIM_RESTORE, 255),
+                    CONF_DIM_ENABLED:      user_input.get(CONF_DIM_ENABLED, False),
+                    CONF_DIM_START:        user_input.get(CONF_DIM_START, "22:00"),
+                    CONF_DIM_END:          user_input.get(CONF_DIM_END, "07:00"),
+                    CONF_DIM_LEVEL:        user_input.get(CONF_DIM_LEVEL, 5),
+                    CONF_DIM_RESTORE:      user_input.get(CONF_DIM_RESTORE, 255),
+                    CONF_MONITOR_ENABLED:  user_input.get(CONF_MONITOR_ENABLED, False),
+                    CONF_MONITOR_INTERVAL: user_input.get(CONF_MONITOR_INTERVAL, 10),
                 })
 
         schema = vol.Schema(
@@ -132,6 +142,9 @@ class MiniScreenESP32OptionsFlow(OptionsFlow):
                     vol.All(int, vol.Range(min=0, max=255)),
                 vol.Optional(CONF_DIM_RESTORE, default=opts.get(CONF_DIM_RESTORE, 255)):
                     vol.All(int, vol.Range(min=0, max=255)),
+                vol.Optional(CONF_MONITOR_ENABLED,  default=opts.get(CONF_MONITOR_ENABLED, False)): bool,
+                vol.Optional(CONF_MONITOR_INTERVAL, default=opts.get(CONF_MONITOR_INTERVAL, 10)):
+                    vol.All(int, vol.Range(min=1, max=300)),
             }
         )
 
@@ -140,3 +153,85 @@ class MiniScreenESP32OptionsFlow(OptionsFlow):
             data_schema=schema,
             errors=errors,
         )
+
+
+class MiniScreenMonitorSubentryFlow(ConfigSubentryFlow):
+    """Flow for adding / editing a monitored sensor subentry."""
+
+    async def async_step_user(
+        self, user_input: dict[str, Any] | None = None
+    ) -> SubentryFlowResult:
+        """Handle adding a new monitored sensor."""
+        return await self._show_form(user_input)
+
+    async def async_step_reconfigure(
+        self, user_input: dict[str, Any] | None = None
+    ) -> SubentryFlowResult:
+        """Handle editing an existing monitored sensor."""
+        return await self._show_form(user_input, reconfigure=True)
+
+    async def _show_form(
+        self,
+        user_input: dict[str, Any] | None,
+        reconfigure: bool = False,
+    ) -> SubentryFlowResult:
+        errors: dict[str, str] = {}
+        existing: dict[str, Any] = {}
+        if reconfigure:
+            existing = dict(self._get_reconfigure_subentry().data)
+
+        if user_input is not None:
+            entity_id: str = user_input["entity_id"]
+            title = user_input.get("label", "").strip() or entity_id.split(".")[-1].replace("_", " ").title()
+            data = {
+                "entity_id":      entity_id,
+                "label":          user_input.get("label", "").strip(),
+                "min_value":      float(user_input.get("min_value", 0)),
+                "max_value":      float(user_input.get("max_value", 100)),
+                "value_type":     user_input.get("value_type", "percentage"),
+                "unit":           user_input.get("unit", "").strip(),
+                "threshold":      float(user_input.get("threshold", 0)),
+                "value_font_size": int(user_input.get("value_font_size", 1)),
+            }
+            if reconfigure:
+                return self.async_update_and_abort(
+                    self._get_entry(),
+                    self._get_reconfigure_subentry(),
+                    title=title,
+                    data=data,
+                )
+            return self.async_create_entry(title=title, data=data)
+
+        schema = vol.Schema({
+            vol.Required("entity_id", default=existing.get("entity_id", "")): selector({"entity": {}}),
+            vol.Optional("label", default=existing.get("label", "")): str,
+            vol.Optional("min_value", default=existing.get("min_value", 0)): vol.Coerce(float),
+            vol.Optional("max_value", default=existing.get("max_value", 100)): vol.Coerce(float),
+            vol.Optional("value_type", default=existing.get("value_type", "percentage")): selector({
+                "select": {
+                    "options": [
+                        {"value": "percentage", "label": "Percentage"},
+                        {"value": "raw", "label": "Raw value"},
+                    ]
+                }
+            }),
+            vol.Optional("unit", default=existing.get("unit", "")): str,
+            vol.Optional("threshold", default=existing.get("threshold", 0)): vol.Coerce(float),
+            vol.Optional("value_font_size", default=existing.get("value_font_size", 1)): selector({
+                "select": {
+                    "options": [
+                        {"value": 1, "label": "Small (10 px)"},
+                        {"value": 2, "label": "Medium (16 px)"},
+                    ]
+                }
+            }),
+        })
+
+        step_id = "reconfigure" if reconfigure else "user"
+        return self.async_show_form(step_id=step_id, data_schema=schema, errors=errors)
+
+
+def selector(config: dict) -> Any:
+    """Wrap a selector config dict as a voluptuous validator."""
+    from homeassistant.helpers.selector import selector as ha_selector
+    return ha_selector(config)
