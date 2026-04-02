@@ -9,6 +9,12 @@ import voluptuous as vol
 
 from homeassistant.config_entries import ConfigEntry, ConfigFlow, ConfigFlowResult, ConfigSubentryFlow, OptionsFlow, SubentryFlowResult
 from homeassistant.core import callback
+from homeassistant.helpers.selector import (
+    EntitySelector,
+    SelectOptionDict,
+    SelectSelector,
+    SelectSelectorConfig,
+)
 
 from .const import (
     CONF_IP_ADDRESS, CONF_NAME, DOMAIN,
@@ -181,57 +187,74 @@ class MiniScreenMonitorSubentryFlow(ConfigSubentryFlow):
             existing = dict(self._get_reconfigure_subentry().data)
 
         if user_input is not None:
-            entity_id: str = user_input["entity_id"]
-            title = user_input.get("label", "").strip() or entity_id.split(".")[-1].replace("_", " ").title()
-            data = {
-                "entity_id":      entity_id,
-                "label":          user_input.get("label", "").strip(),
-                "min_value":      float(user_input.get("min_value", 0)),
-                "max_value":      float(user_input.get("max_value", 100)),
-                "value_type":     user_input.get("value_type", "percentage"),
-                "unit":           user_input.get("unit", "").strip(),
-                "threshold":      float(user_input.get("threshold", 0)),
-                "value_font_size": int(user_input.get("value_font_size", 1)),
-            }
-            if reconfigure:
-                return self.async_update_and_abort(
-                    self._get_entry(),
-                    self._get_reconfigure_subentry(),
-                    title=title,
-                    data=data,
-                )
-            return self.async_create_entry(title=title, data=data)
+            try:
+                entity_id = str(user_input["entity_id"]).strip()
+                label = str(user_input.get("label", "")).strip()
+                min_value = float(user_input.get("min_value", 0))
+                max_value = float(user_input.get("max_value", 100))
+                value_type = str(user_input.get("value_type", "percentage"))
+                unit = str(user_input.get("unit", "")).strip()
+                threshold = float(user_input.get("threshold", 0))
+                value_font_size = int(user_input.get("value_font_size", "1"))
+            except (KeyError, TypeError, ValueError):
+                errors["base"] = "invalid_monitor_config"
+            else:
+                if not entity_id or value_type not in {"percentage", "raw"}:
+                    errors["base"] = "invalid_monitor_config"
+                elif max_value <= min_value:
+                    errors["base"] = "invalid_range"
+                elif not 0 <= threshold <= 100:
+                    errors["base"] = "threshold_range"
+                elif value_font_size not in {1, 2}:
+                    errors["base"] = "invalid_monitor_config"
+                else:
+                    title = label or entity_id.split(".")[-1].replace("_", " ").title()
+                    data = {
+                        "entity_id": entity_id,
+                        "label": label,
+                        "min_value": min_value,
+                        "max_value": max_value,
+                        "value_type": value_type,
+                        "unit": unit,
+                        "threshold": threshold,
+                        "value_font_size": value_font_size,
+                    }
+                    if reconfigure:
+                        return self.async_update_and_abort(
+                            self._get_entry(),
+                            self._get_reconfigure_subentry(),
+                            title=title,
+                            data=data,
+                        )
+                    return self.async_create_entry(title=title, data=data)
 
         schema = vol.Schema({
-            vol.Required("entity_id", default=existing.get("entity_id", "")): selector({"entity": {}}),
+            vol.Required("entity_id", default=existing.get("entity_id", "")): EntitySelector(),
             vol.Optional("label", default=existing.get("label", "")): str,
             vol.Optional("min_value", default=existing.get("min_value", 0)): vol.Coerce(float),
             vol.Optional("max_value", default=existing.get("max_value", 100)): vol.Coerce(float),
-            vol.Optional("value_type", default=existing.get("value_type", "percentage")): selector({
-                "select": {
-                    "options": [
-                        {"value": "percentage", "label": "Percentage"},
-                        {"value": "raw", "label": "Raw value"},
+            vol.Optional("value_type", default=existing.get("value_type", "percentage")): SelectSelector(
+                SelectSelectorConfig(
+                    options=[
+                        SelectOptionDict(value="percentage", label="Percentage"),
+                        SelectOptionDict(value="raw", label="Raw value"),
                     ]
-                }
-            }),
+                )
+            ),
             vol.Optional("unit", default=existing.get("unit", "")): str,
             vol.Optional("threshold", default=existing.get("threshold", 0)): vol.Coerce(float),
-            vol.Optional("value_font_size", default=existing.get("value_font_size", 1)): selector({
-                "select": {
-                    "options": [
-                        {"value": 1, "label": "Small (10 px)"},
-                        {"value": 2, "label": "Medium (16 px)"},
+            vol.Optional(
+                "value_font_size",
+                default=str(existing.get("value_font_size", 1)),
+            ): SelectSelector(
+                SelectSelectorConfig(
+                    options=[
+                        SelectOptionDict(value="1", label="Small (10 px)"),
+                        SelectOptionDict(value="2", label="Medium (16 px)"),
                     ]
-                }
-            }),
+                )
+            ),
         })
 
         step_id = "reconfigure" if reconfigure else "user"
         return self.async_show_form(step_id=step_id, data_schema=schema, errors=errors)
-
-
-def selector(config: dict) -> Any:
-    """Wrap a selector config dict as a voluptuous validator."""
-    from homeassistant.helpers.selector import selector as ha_selector
-    return ha_selector(config)

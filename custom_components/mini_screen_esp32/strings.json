@@ -28,6 +28,11 @@
         "user": "Add monitored sensor"
       },
       "entry_type": "Monitored sensor",
+      "error": {
+        "invalid_monitor_config": "Check the monitored sensor settings and try again.",
+        "invalid_range": "Maximum value must be greater than minimum value.",
+        "threshold_range": "Alert threshold must be between 0 and 100."
+      },
       "step": {
         "user": {
           "title": "Add monitored sensor",
