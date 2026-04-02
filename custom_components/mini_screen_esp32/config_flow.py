@@ -10,7 +10,7 @@ import voluptuous as vol
 from homeassistant.config_entries import ConfigEntry, ConfigFlow, ConfigFlowResult, ConfigSubentryFlow, OptionsFlow, SubentryFlowResult
 from homeassistant.core import callback
 
-from . import (
+from .const import (
     CONF_IP_ADDRESS, CONF_NAME, DOMAIN,
     CONF_DIM_ENABLED, CONF_DIM_START, CONF_DIM_END, CONF_DIM_LEVEL, CONF_DIM_RESTORE,
     CONF_MONITOR_ENABLED, CONF_MONITOR_INTERVAL, SUBENTRY_TYPE_MONITOR,

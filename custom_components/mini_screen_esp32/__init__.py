@@ -3,38 +3,26 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from datetime import timedelta
 from typing import Any
 
 import aiohttp
-
-from datetime import timedelta
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import Event, HomeAssistant, ServiceCall, callback
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.event import async_track_state_change_event, async_track_time_change, async_track_time_interval
 
+from .const import (
+    CONF_DIM_ENABLED, CONF_DIM_END, CONF_DIM_LEVEL, CONF_DIM_RESTORE, CONF_DIM_START,
+    CONF_IP_ADDRESS, CONF_MONITOR_ENABLED, CONF_MONITOR_INTERVAL, CONF_NAME,
+    DOMAIN, SUBENTRY_TYPE_MONITOR,
+)
+from .helpers import build_progress_params, render_value_text, state_to_percent, threshold_to_pct
+
 _LOGGER = logging.getLogger(__name__)
 
-DOMAIN = "mini_screen_esp32"
 PLATFORMS = ["notify", "button", "switch"]
-
-CONF_IP_ADDRESS = "ip_address"
-CONF_NAME = "name"
-
-# Options keys for dim schedule (stored in entry.options)
-CONF_DIM_ENABLED  = "dim_enabled"
-CONF_DIM_START    = "dim_start"
-CONF_DIM_END      = "dim_end"
-CONF_DIM_LEVEL    = "dim_level"
-CONF_DIM_RESTORE  = "dim_restore_level"
-
-# Options keys for monitor
-CONF_MONITOR_ENABLED  = "monitor_enabled"
-CONF_MONITOR_INTERVAL = "monitor_interval"
-
-# Subentry type key
-SUBENTRY_TYPE_MONITOR = "monitored_sensor"
 
 # Style -> endpoint mapping
 STYLE_ENDPOINTS: dict[str, str] = {
@@ -153,15 +141,6 @@ def _apply_monitor(
 
     entry_data["monitor_index"] = 0
 
-    def _to_pct(raw: str, cfg: dict) -> float:
-        val = float(raw)
-        min_v = float(cfg.get("min_value", 0))
-        max_v = float(cfg.get("max_value", 100))
-        span = max_v - min_v
-        if span == 0:
-            return 0.0
-        return (val - min_v) / span * 100.0
-
     @callback
     def _monitor_tick(_now: Any) -> None:
         if entry_data.get("monitor_paused"):
@@ -184,10 +163,9 @@ def _apply_monitor(
             if threshold <= 0:
                 active.append(cfg)  # no threshold → always shown
                 continue
-            try:
-                pct = _to_pct(state.state, cfg)
-            except (ValueError, TypeError):
-                continue
+            min_v = float(cfg.get("min_value", 0))
+            max_v = float(cfg.get("max_value", 100))
+            pct = state_to_percent(state.state, min_v, max_v)
             if pct >= threshold:
                 active.append(cfg)
 
@@ -204,33 +182,24 @@ def _apply_monitor(
         if state is None:
             return
 
-        try:
-            pct = _to_pct(state.state, cfg)
-        except (ValueError, TypeError):
-            return
-
-        bar_val = max(0, min(100, int(round(pct))))
+        min_v = float(cfg.get("min_value", 0))
+        max_v = float(cfg.get("max_value", 100))
+        bar_val = state_to_percent(state.state, min_v, max_v)
         default_label = entity_id.split(".")[-1].replace("_", " ").title()
         label = cfg.get("label", "").strip() or default_label
-
-        params: dict[str, Any] = {"value": bar_val, "label": label}
-
         value_type: str = cfg.get("value_type", "percentage")
-        if value_type == "raw":
-            unit = cfg.get("unit", "").strip()
-            if not unit:
-                s = hass.states.get(entity_id)
-                unit = (s.attributes.get("unit_of_measurement", "") if s else "")
-            params["value_text"] = f"{state.state} {unit}".strip()
-
-        vfs = int(cfg.get("value_font_size", 1))
-        if vfs == 2:
-            params["value_font_size"] = 2
-
+        vt = render_value_text(hass, state.state, entity_id, value_type, cfg.get("unit", ""), None)
         threshold = float(cfg.get("threshold", 0))
-        if threshold > 0:
-            params["crit"] = max(0, min(100, int(round(threshold))))
+        crit_pct = max(0, min(100, int(round(threshold)))) if threshold > 0 else 0
 
+        params = build_progress_params(
+            pct=bar_val,
+            label=label,
+            value_text=vt,
+            auto_clear_delay=0,
+            value_font_size=int(cfg.get("value_font_size", 1)),
+            crit_pct=crit_pct,
+        )
         hass.async_create_task(_call_device(ip=ip, path="/showProgress", params=params))
 
     entry_data["monitor_unsub"] = async_track_time_interval(
@@ -704,23 +673,6 @@ def _register_services(hass: HomeAssistant) -> None:
         def _render_label() -> str:
             return Template(raw_label, hass).async_render(parse_result=False) if raw_label else ""
 
-        def _render_value_text(raw_sensor: str) -> str:
-            if value_type != "raw":
-                # percentage mode — let firmware show X%
-                return ""
-            # raw mode: explicit template takes priority
-            if raw_value_text and raw_value_text.strip():
-                return Template(raw_value_text, hass).async_render(
-                    variables={"value": raw_sensor}, parse_result=False
-                )
-            # raw mode: auto-format with unit
-            suffix = unit
-            if not suffix:
-                # fall back to entity's own unit_of_measurement
-                state = hass.states.get(entity_id)
-                suffix = (state.attributes.get("unit_of_measurement", "") if state else "")
-            return f"{raw_sensor} {suffix}".strip()
-
         entries = _get_matching_entries(hass, device_name)
         if not entries:
             _LOGGER.warning(
@@ -730,16 +682,19 @@ def _register_services(hass: HomeAssistant) -> None:
             )
             return
 
-        def _to_percent(state_value: str) -> int:
-            try:
-                raw = float(state_value)
-            except ValueError:
-                return 0
-            span = max_value - min_value
-            if span == 0:
-                return 0
-            pct = (raw - min_value) / span * 100.0
-            return max(0, min(100, int(round(pct))))
+        crit_pct = threshold_to_pct(crit_threshold_raw, value_type, min_value, max_value)
+
+        def _make_params(raw_sensor: str) -> dict:
+            pct = state_to_percent(raw_sensor, min_value, max_value)
+            vt = render_value_text(hass, raw_sensor, entity_id, value_type, unit, raw_value_text)
+            return build_progress_params(
+                pct=pct,
+                label=_render_label(),
+                value_text=vt,
+                auto_clear_delay=auto_clear_delay,
+                value_font_size=value_font_size,
+                crit_pct=crit_pct,
+            )
 
         for entry_data in entries:
             # Cancel existing subscription
@@ -748,37 +703,14 @@ def _register_services(hass: HomeAssistant) -> None:
                 existing_unsub()
                 entry_data["sensor_unsub"] = None
 
-            def _threshold_to_pct(raw: float) -> int:
-                if value_type == "raw":
-                    span = max_value - min_value
-                    if span == 0:
-                        return 0
-                    return max(0, min(100, int(round((raw - min_value) / span * 100))))
-                return max(0, min(100, int(round(raw))))
-
-            def _build_progress_params(pct: int, raw_sensor: str) -> dict:
-                params: dict = {"value": pct, "label": _render_label()}
-                vt = _render_value_text(raw_sensor)
-                if vt:
-                    params["value_text"] = vt
-                if auto_clear_delay > 0:
-                    params["auto_clear_delay"] = auto_clear_delay
-                if value_font_size == 2:
-                    params["value_font_size"] = 2
-                crit_pct = _threshold_to_pct(crit_threshold_raw)
-                if crit_pct > 0:
-                    params["crit"] = crit_pct
-                return params
-
             # Send current state immediately
             current_state = hass.states.get(entity_id)
             if current_state is not None:
-                pct = _to_percent(current_state.state)
                 hass.async_create_task(
                     _call_device(
                         ip=entry_data["ip_address"],
                         path="/showProgress",
-                        params=_build_progress_params(pct, current_state.state),
+                        params=_make_params(current_state.state),
                     )
                 )
 
@@ -791,12 +723,11 @@ def _register_services(hass: HomeAssistant) -> None:
                 new_state = event.data.get("new_state")
                 if new_state is None:
                     return
-                pct = _to_percent(new_state.state)
                 hass.async_create_task(
                     _call_device(
                         ip=_entry_data["ip_address"],
                         path="/showProgress",
-                        params=_build_progress_params(pct, new_state.state),
+                        params=_make_params(new_state.state),
                     )
                 )
 

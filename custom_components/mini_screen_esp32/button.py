@@ -13,7 +13,8 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from . import CONF_IP_ADDRESS, CONF_NAME, DOMAIN
+from .const import CONF_IP_ADDRESS, CONF_NAME
+from .helpers import device_info
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -26,15 +27,10 @@ async def async_setup_entry(
     """Set up Mini Screen ESP32 button entities."""
     ip_address: str = entry.data[CONF_IP_ADDRESS]
     name: str = entry.data[CONF_NAME]
-    device_info = DeviceInfo(
-        identifiers={(DOMAIN, entry.entry_id)},
-        name=name,
-        manufacturer="ESP8266",
-        model="Mini Screen OLED",
-    )
+    entry_device_info = device_info(entry.entry_id, name)
     async_add_entities([
-        MiniScreenRestartButton(entry.entry_id, ip_address, name, device_info),
-        MiniScreenClearButton(entry.entry_id, ip_address, name, device_info),
+        MiniScreenRestartButton(entry.entry_id, ip_address, entry_device_info),
+        MiniScreenClearButton(entry.entry_id, ip_address, entry_device_info),
     ])
 
 
@@ -47,7 +43,6 @@ class _MiniScreenButton(ButtonEntity):
         self,
         entry_id: str,
         ip_address: str,
-        device_name: str,
         device_info: DeviceInfo,
         label: str,
         unique_suffix: str,
@@ -85,14 +80,16 @@ class _MiniScreenButton(ButtonEntity):
 class MiniScreenRestartButton(_MiniScreenButton):
     _attr_icon = "mdi:restart"
 
-    def __init__(self, entry_id, ip_address, device_name, device_info):
-        super().__init__(entry_id, ip_address, device_name, device_info,
-                         "Restart", "restart", "/restart")
+    def __init__(self, entry_id, ip_address, device_info):
+        super().__init__(
+            entry_id, ip_address, device_info, "Restart", "restart", "/restart"
+        )
 
 
 class MiniScreenClearButton(_MiniScreenButton):
     _attr_icon = "mdi:monitor-off"
 
-    def __init__(self, entry_id, ip_address, device_name, device_info):
-        super().__init__(entry_id, ip_address, device_name, device_info,
-                         "Clear display", "clear", "/clear")
+    def __init__(self, entry_id, ip_address, device_info):
+        super().__init__(
+            entry_id, ip_address, device_info, "Clear display", "clear", "/clear"
+        )

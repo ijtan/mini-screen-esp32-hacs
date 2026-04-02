@@ -13,7 +13,14 @@ from homeassistant.core import Context, Event, HomeAssistant, callback
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.event import async_track_state_change_event
 
-from . import DOMAIN, STYLE_ENDPOINTS, _build_send_params, _call_device
+from . import STYLE_ENDPOINTS, _build_send_params, _call_device
+from .const import DOMAIN
+from .helpers import (
+    build_progress_params,
+    render_value_text,
+    state_to_percent,
+    threshold_to_pct,
+)
 
 # ── Action type constants ─────────────────────────────────────────────────────
 ACTION_SEND_NORMAL      = "send_normal"
@@ -287,49 +294,32 @@ async def async_call_action_from_config(
         auto_clear_delay: int = int(config.get("auto_clear_delay", 0))
         value_font_size: int = int(config.get("value_font_size", 1))
         crit_threshold_raw: float = float(config.get("crit_threshold", 0))
+        crit_pct = threshold_to_pct(
+            crit_threshold_raw, value_type, min_value, max_value
+        )
 
-        def _threshold_to_pct(raw: float) -> int:
-            if value_type == "raw":
-                span = max_value - min_value
-                if span == 0:
-                    return 0
-                return max(0, min(100, int(round((raw - min_value) / span * 100))))
-            return max(0, min(100, int(round(raw))))
-
-        def _to_percent(state_value: str) -> int:
-            try:
-                raw = float(state_value)
-            except ValueError:
-                return 0
-            span = max_value - min_value
-            if span == 0:
-                return 0
-            pct = (raw - min_value) / span * 100.0
-            return max(0, min(100, int(round(pct))))
-
-        def _build_progress_params(pct: int, raw_sensor: str) -> dict:
-            label = Template(raw_label, hass).async_render(parse_result=False) if raw_label else ""
-            params: dict = {"value": pct, "label": label}
-            if value_type == "raw":
-                if raw_value_text.strip():
-                    vt = Template(raw_value_text, hass).async_render(
-                        variables={"value": raw_sensor}, parse_result=False
-                    )
-                    params["value_text"] = vt
-                else:
-                    suffix = unit
-                    if not suffix:
-                        state = hass.states.get(entity_id)
-                        suffix = (state.attributes.get("unit_of_measurement", "") if state else "")
-                    params["value_text"] = f"{raw_sensor} {suffix}".strip()
-            if auto_clear_delay > 0:
-                params["auto_clear_delay"] = auto_clear_delay
-            if value_font_size == 2:
-                params["value_font_size"] = 2
-            crit_pct = _threshold_to_pct(crit_threshold_raw)
-            if crit_pct > 0:
-                params["crit"] = crit_pct
-            return params
+        def _make_params(raw_sensor: str) -> dict[str, Any]:
+            label = (
+                Template(raw_label, hass).async_render(parse_result=False)
+                if raw_label
+                else ""
+            )
+            value_text = render_value_text(
+                hass,
+                raw_sensor,
+                entity_id,
+                value_type,
+                unit,
+                raw_value_text,
+            )
+            return build_progress_params(
+                pct=state_to_percent(raw_sensor, min_value, max_value),
+                label=label,
+                value_text=value_text,
+                auto_clear_delay=auto_clear_delay,
+                value_font_size=value_font_size,
+                crit_pct=crit_pct,
+            )
 
         # Cancel existing subscription
         existing_unsub = entry_data.get("sensor_unsub")
@@ -341,9 +331,11 @@ async def async_call_action_from_config(
         current_state = hass.states.get(entity_id)
         if current_state is not None:
             hass.async_create_task(
-                _call_device(ip=ip, path="/showProgress",
-                             params=_build_progress_params(
-                                 _to_percent(current_state.state), current_state.state))
+                _call_device(
+                    ip=ip,
+                    path="/showProgress",
+                    params=_make_params(current_state.state),
+                )
             )
 
         @callback
@@ -352,9 +344,11 @@ async def async_call_action_from_config(
             if new_state is None:
                 return
             hass.async_create_task(
-                _call_device(ip=_entry_data["ip_address"], path="/showProgress",
-                             params=_build_progress_params(
-                                 _to_percent(new_state.state), new_state.state))
+                _call_device(
+                    ip=_entry_data["ip_address"],
+                    path="/showProgress",
+                    params=_make_params(new_state.state),
+                )
             )
 
         entry_data["sensor_unsub"] = async_track_state_change_event(
