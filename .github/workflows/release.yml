@@ -23,8 +23,46 @@ jobs:
           LATEST=$(git tag --sort=-v:refname | head -n 1)
           if [ -z "$LATEST" ]; then
             LATEST="1.0.0"
+            echo "has_tag=false" >> $GITHUB_OUTPUT
+          else
+            echo "has_tag=true" >> $GITHUB_OUTPUT
           fi
           echo "latest=$LATEST" >> $GITHUB_OUTPUT
+
+      - name: Build release notes
+        run: |
+          LATEST="${{ steps.get_tag.outputs.latest }}"
+
+          if [ "${{ steps.get_tag.outputs.has_tag }}" = "true" ]; then
+            RANGE="$LATEST..HEAD"
+            mapfile -t SUBJECTS < <(git log --reverse --pretty=format:'%s' "$RANGE")
+          else
+            mapfile -t SUBJECTS < <(git log --reverse --pretty=format:'%s')
+          fi
+
+          echo "## Changes" > release_notes.md
+          echo >> release_notes.md
+
+          HAS_CHANGES=false
+
+          for subject in "${SUBJECTS[@]}"; do
+            subject=$(echo "$subject" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
+
+            if [ -z "$subject" ]; then
+              continue
+            fi
+
+            if echo "$subject" | grep -Eqi '^(Merge pull request|Merge branch|chore: bump version to )'; then
+              continue
+            fi
+
+            echo "- $subject" >> release_notes.md
+            HAS_CHANGES=true
+          done
+
+          if [ "$HAS_CHANGES" = "false" ]; then
+            echo "- Maintenance release" >> release_notes.md
+          fi
 
       - name: Bump patch version
         id: bump
@@ -55,4 +93,4 @@ jobs:
         with:
           tag_name: ${{ steps.bump.outputs.version }}
           name: ${{ steps.bump.outputs.version }}
-          generate_release_notes: true
+          body_path: release_notes.md
