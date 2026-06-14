@@ -294,13 +294,17 @@ def _apply_monitor(
     _LOGGER.debug("Mini Screen ESP32 monitor started for %s (%ds interval)", ip, interval)
 
 
-def _claude_frame_params(pct: float, label: str, value_text: str, crit: bool) -> dict[str, Any]:
-    """Build /showProgress params for one Claude usage frame."""
+def _claude_frame_params(pct: float, title: str, subtitle: str, crit: bool) -> dict[str, Any]:
+    """Build /showProgress params for one Claude usage frame.
+
+    The percentage + reset countdown go in the big top title (``label``); the
+    metric name goes in the small line below the bar (``value_text``).
+    """
     bar = max(0, min(100, int(round(pct))))
     return build_progress_params(
         pct=bar,
-        label=label,
-        value_text=value_text,
+        label=title,
+        value_text=subtitle,
         auto_clear_delay=0,
         value_font_size=1,
         crit_pct=100 if crit else 0,
@@ -339,10 +343,11 @@ def _apply_claude(
 
     rotate = max(1, int(opts.get(CONF_CLAUDE_ROTATE, 6)))
     ip: str = entry_data["ip_address"]
-    entry_data["claude_index"] = 0
+    entry_data["claude_seconds"] = 0
+    entry_data["claude_last_params"] = None
 
     @callback
-    def _refresh_claude(*, advance: bool) -> None:
+    def _refresh_claude() -> None:
         # Honour the shared auto-display pause (messages / pins take over briefly)
         if entry_data.get("monitor_paused"):
             return
@@ -368,12 +373,12 @@ def _apply_claude(
                 _set_display_owner(entry_data, None)
                 hass.async_create_task(_call_device(ip=ip, path="/unpin"))
             entry_data["claude_had_active"] = False
+            entry_data["claude_last_params"] = None
             return
         entry_data["claude_had_active"] = True
 
-        idx = entry_data.get("claude_index", 0)
-        if advance:
-            entry_data["claude_index"] = idx + 1
+        # Frame index advances every `rotate` seconds (1 s base tick below)
+        idx = entry_data.get("claude_seconds", 0) // rotate
 
         s_pct = session_pct or 0.0
         w_pct = week_pct or 0.0
@@ -384,12 +389,12 @@ def _apply_claude(
 
         def session_frame(crit: bool = False) -> dict[str, Any]:
             return _claude_frame_params(
-                s_pct, "Session", _join(s_pct, countdown("session_reset_time")), crit
+                s_pct, _join(s_pct, countdown("session_reset_time")), "Claude Session", crit
             )
 
         def week_frame(crit: bool = False) -> dict[str, Any]:
             return _claude_frame_params(
-                w_pct, "Week", _join(w_pct, countdown("week_reset_time")), crit
+                w_pct, _join(w_pct, countdown("week_reset_time")), "Claude Weekly Usage", crit
             )
 
         # Maxed-out override
@@ -421,7 +426,7 @@ def _apply_claude(
                 lim_txt = f"/{limit:.0f}" if limit is not None else ""
                 rotation.append(
                     lambda b=bar, t=f"{credits:.1f}{lim_txt}cr": _claude_frame_params(
-                        b, "Extra Usage", t, crit=False
+                        b, t, "Claude Extra", crit=False
                     )
                 )
             params = rotation[idx % len(rotation)]()
@@ -433,15 +438,24 @@ def _apply_claude(
             show_week = (idx % CLAUDE_WEEK_EVERY) == (CLAUDE_WEEK_EVERY - 1)
             params = week_frame() if show_week else session_frame()
 
+        # Dedupe: only hit the device when the rendered frame actually changed,
+        # or when we need to reclaim the display after another feature used it.
+        if params == entry_data.get("claude_last_params") and entry_data.get("display_owner") == "claude":
+            return
+        entry_data["claude_last_params"] = params
         _set_display_owner(entry_data, "claude")
         hass.async_create_task(_call_device(ip=ip, path="/showProgress", params=params))
 
     @callback
     def _claude_tick(_now: Any) -> None:
-        _refresh_claude(advance=True)
+        entry_data["claude_seconds"] = entry_data.get("claude_seconds", 0) + 1
+        _refresh_claude()
 
+    # 1-second base tick so the sub-hour countdown can show ticking seconds.
+    # The frame rotates every `rotate` seconds and pushes are deduped, so the
+    # device is only contacted when the on-screen text actually changes.
     entry_data["claude_unsub"] = async_track_time_interval(
-        hass, _claude_tick, timedelta(seconds=rotate)
+        hass, _claude_tick, timedelta(seconds=1)
     )
 
     claude_entity_ids = list(find_claude_entities(hass).values())
@@ -450,12 +464,12 @@ def _apply_claude(
         def _on_claude_state(event: Event) -> None:
             if event.data.get("new_state") is None:
                 return
-            _refresh_claude(advance=False)
+            _refresh_claude()
 
         entry_data["claude_state_unsub"] = async_track_state_change_event(
             hass, claude_entity_ids, _on_claude_state
         )
-    _refresh_claude(advance=False)
+    _refresh_claude()
     _LOGGER.debug("Mini Screen ESP32 Claude mode started for %s (%ds rotation)", ip, rotate)
 
 
@@ -487,7 +501,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         "monitor_paused": False,
         "claude_unsub": None,
         "claude_state_unsub": None,
-        "claude_index": 0,
+        "claude_seconds": 0,
+        "claude_last_params": None,
         "claude_had_active": False,
         "display_owner": None,
     }

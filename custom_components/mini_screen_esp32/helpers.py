@@ -133,11 +133,13 @@ def find_claude_entities(hass: HomeAssistant) -> dict[str, str]:
 
 def format_reset_countdown(state_value: Any) -> str:
     """
-    Format a timestamp sensor state as a compact coarse countdown.
+    Format a timestamp sensor state as a compact countdown.
 
-    Examples: "now", "38m", "3h05m", "2d4h". Returns "" if unparseable.
-    (Phase 1 shows minute granularity; second-by-second ticking is planned
-    for the dedicated firmware countdown in Phase 2.)
+    Granularity adapts to how far away the reset is:
+      • under 1 hour → "M:SS"  (e.g. "38:12", "0:45")   — seconds tick
+      • under 1 day  → "3h05m"
+      • else         → "2d4h"
+    Returns "now" if already past, or "" if unparseable.
     """
     if not state_value or str(state_value).lower() in {"unknown", "unavailable", "none"}:
         return ""
@@ -147,12 +149,13 @@ def format_reset_countdown(state_value: Any) -> str:
     now = dt_util.utcnow()
     if target.tzinfo is None:
         target = target.replace(tzinfo=now.tzinfo)
-    delta = (target - now).total_seconds()
+    delta = int((target - now).total_seconds())
     if delta <= 0:
         return "now"
-    minutes = int(delta // 60)
-    if minutes < 60:
-        return f"{max(1, minutes)}m"
+    if delta < 3600:
+        minutes, seconds = divmod(delta, 60)
+        return f"{minutes}:{seconds:02d}"
+    minutes = delta // 60
     hours, rem_m = divmod(minutes, 60)
     if hours < 24:
         return f"{hours}h{rem_m:02d}m"
