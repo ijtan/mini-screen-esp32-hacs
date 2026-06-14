@@ -19,11 +19,16 @@ from homeassistant.helpers.event import (
 )
 
 from .const import (
+    CLAUDE_WEEK_EVERY,
+    CONF_CLAUDE_ENABLED, CONF_CLAUDE_ROTATE,
     CONF_DIM_ENABLED, CONF_DIM_END, CONF_DIM_LEVEL, CONF_DIM_RESTORE, CONF_DIM_START,
     CONF_IP_ADDRESS, CONF_MONITOR_ENABLED, CONF_MONITOR_INTERVAL, CONF_NAME,
     DOMAIN, SUBENTRY_TYPE_MONITOR,
 )
-from .helpers import build_progress_params, render_value_text, state_to_percent, threshold_to_pct
+from .helpers import (
+    build_progress_params, find_claude_entities, format_reset_countdown,
+    is_truthy_state, parse_float, render_value_text, state_to_percent, threshold_to_pct,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -167,7 +172,8 @@ def _apply_monitor(
             entry_data[key] = None
 
     opts = entry.options
-    if not opts.get(CONF_MONITOR_ENABLED, False):
+    # Claude usage mode owns the auto-display when enabled — stand the monitor down.
+    if not opts.get(CONF_MONITOR_ENABLED, False) or opts.get(CONF_CLAUDE_ENABLED, False):
         if entry_data.get("display_owner") == "monitor":
             _set_display_owner(entry_data, None)
             hass.async_create_task(_call_device(ip=entry_data["ip_address"], path="/unpin"))
@@ -288,6 +294,171 @@ def _apply_monitor(
     _LOGGER.debug("Mini Screen ESP32 monitor started for %s (%ds interval)", ip, interval)
 
 
+def _claude_frame_params(pct: float, label: str, value_text: str, crit: bool) -> dict[str, Any]:
+    """Build /showProgress params for one Claude usage frame."""
+    bar = max(0, min(100, int(round(pct))))
+    return build_progress_params(
+        pct=bar,
+        label=label,
+        value_text=value_text,
+        auto_clear_delay=0,
+        value_font_size=1,
+        crit_pct=100 if crit else 0,
+    )
+
+
+def _apply_claude(
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+    entry_data: dict[str, Any],
+) -> None:
+    """Set up (or restart) the Claude usage display loop for one entry.
+
+    Rotation rules:
+      • Session = 0 %        → show only the Week frame.
+      • Session > 0 %        → show Session primarily; Week once every
+                               CLAUDE_WEEK_EVERY rotations.
+      • Session/Week ≥ 100 % → show the maxed bar (blinking) and, if extra
+                               usage is enabled with credits started, rotate
+                               in an Extra Usage frame (credits / limit).
+    """
+    # Cancel any existing Claude timer/listener
+    for key in ("claude_unsub", "claude_state_unsub"):
+        unsub = entry_data.get(key)
+        if unsub is not None:
+            unsub()
+            entry_data[key] = None
+
+    opts = entry.options
+    if not opts.get(CONF_CLAUDE_ENABLED, False):
+        if entry_data.get("display_owner") == "claude":
+            _set_display_owner(entry_data, None)
+            hass.async_create_task(_call_device(ip=entry_data["ip_address"], path="/unpin"))
+        entry_data["claude_had_active"] = False
+        return
+
+    rotate = max(1, int(opts.get(CONF_CLAUDE_ROTATE, 6)))
+    ip: str = entry_data["ip_address"]
+    entry_data["claude_index"] = 0
+
+    @callback
+    def _refresh_claude(*, advance: bool) -> None:
+        # Honour the shared auto-display pause (messages / pins take over briefly)
+        if entry_data.get("monitor_paused"):
+            return
+
+        # Re-resolve entities each tick so the integration loading later is picked up
+        ent = find_claude_entities(hass)
+        states = {k: hass.states.get(v) for k, v in ent.items()}
+
+        def num(key: str) -> float | None:
+            s = states.get(key)
+            return parse_float(s.state) if s else None
+
+        def countdown(key: str) -> str:
+            s = states.get(key)
+            return format_reset_countdown(s.state) if s else ""
+
+        session_pct = num("session_usage_percent")
+        week_pct = num("week_usage_percent")
+
+        # Nothing usable to show — release the display if we owned it
+        if session_pct is None and week_pct is None:
+            if entry_data.get("claude_had_active") and entry_data.get("display_owner") == "claude":
+                _set_display_owner(entry_data, None)
+                hass.async_create_task(_call_device(ip=ip, path="/unpin"))
+            entry_data["claude_had_active"] = False
+            return
+        entry_data["claude_had_active"] = True
+
+        idx = entry_data.get("claude_index", 0)
+        if advance:
+            entry_data["claude_index"] = idx + 1
+
+        s_pct = session_pct or 0.0
+        w_pct = week_pct or 0.0
+
+        def _join(pct: float, cd: str) -> str:
+            txt = f"{pct:.0f}%"
+            return f"{txt}  {cd}" if cd else txt
+
+        def session_frame(crit: bool = False) -> dict[str, Any]:
+            return _claude_frame_params(
+                s_pct, "Session", _join(s_pct, countdown("session_reset_time")), crit
+            )
+
+        def week_frame(crit: bool = False) -> dict[str, Any]:
+            return _claude_frame_params(
+                w_pct, "Week", _join(w_pct, countdown("week_reset_time")), crit
+            )
+
+        # Maxed-out override
+        maxed: list[str] = []
+        if session_pct is not None and s_pct >= 100:
+            maxed.append("session")
+        if week_pct is not None and w_pct >= 100:
+            maxed.append("week")
+
+        if maxed:
+            extra_enabled = (
+                is_truthy_state(states["extra_usage_enabled"].state)
+                if states.get("extra_usage_enabled")
+                else False
+            )
+            credits = num("extra_usage_credits") or 0.0
+            limit = num("extra_usage_limit")
+            extra_pct = num("extra_usage_percent")
+
+            rotation: list[Any] = [
+                (lambda: session_frame(crit=True)) if m == "session"
+                else (lambda: week_frame(crit=True))
+                for m in maxed
+            ]
+            if extra_enabled and credits > 0:
+                bar = extra_pct if extra_pct is not None else (
+                    (credits / limit * 100.0) if limit else 0.0
+                )
+                lim_txt = f"/{limit:.0f}" if limit is not None else ""
+                rotation.append(
+                    lambda b=bar, t=f"{credits:.1f}{lim_txt}cr": _claude_frame_params(
+                        b, "Extra Usage", t, crit=False
+                    )
+                )
+            params = rotation[idx % len(rotation)]()
+        elif session_pct is None or s_pct <= 0:
+            # Session inactive → Week only
+            params = week_frame()
+        else:
+            # Session active → primary; Week every CLAUDE_WEEK_EVERY rotations
+            show_week = (idx % CLAUDE_WEEK_EVERY) == (CLAUDE_WEEK_EVERY - 1)
+            params = week_frame() if show_week else session_frame()
+
+        _set_display_owner(entry_data, "claude")
+        hass.async_create_task(_call_device(ip=ip, path="/showProgress", params=params))
+
+    @callback
+    def _claude_tick(_now: Any) -> None:
+        _refresh_claude(advance=True)
+
+    entry_data["claude_unsub"] = async_track_time_interval(
+        hass, _claude_tick, timedelta(seconds=rotate)
+    )
+
+    claude_entity_ids = list(find_claude_entities(hass).values())
+    if claude_entity_ids:
+        @callback
+        def _on_claude_state(event: Event) -> None:
+            if event.data.get("new_state") is None:
+                return
+            _refresh_claude(advance=False)
+
+        entry_data["claude_state_unsub"] = async_track_state_change_event(
+            hass, claude_entity_ids, _on_claude_state
+        )
+    _refresh_claude(advance=False)
+    _LOGGER.debug("Mini Screen ESP32 Claude mode started for %s (%ds rotation)", ip, rotate)
+
+
 async def async_setup(hass: HomeAssistant, config: dict) -> bool:
     """Set up the Mini Screen ESP32 component."""
     hass.data.setdefault(DOMAIN, {})
@@ -314,6 +485,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         "monitor_index": 0,
         "monitor_had_active": False,
         "monitor_paused": False,
+        "claude_unsub": None,
+        "claude_state_unsub": None,
+        "claude_index": 0,
+        "claude_had_active": False,
         "display_owner": None,
     }
 
@@ -356,10 +531,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         )
     )
 
-    # Start sensor monitor if enabled
+    # Start sensor monitor / Claude usage mode if enabled
     _apply_monitor(hass, entry, entry_data)
+    _apply_claude(hass, entry, entry_data)
 
-    # Re-apply dim schedule and monitor when options are updated via the UI
+    # Re-apply dim schedule, monitor and Claude mode when options are updated via the UI
     entry.async_on_unload(entry.add_update_listener(_async_options_updated))
 
     return True
@@ -380,8 +556,9 @@ async def _async_options_updated(hass: HomeAssistant, entry: ConfigEntry) -> Non
     # Update HA-side time listeners
     _apply_dim_schedule(hass, entry_data, enabled, start_str, end_str, dim_level, restore)
 
-    # Restart monitor with new settings
+    # Restart monitor and Claude mode with new settings
     _apply_monitor(hass, entry, entry_data)
+    _apply_claude(hass, entry, entry_data)
 
     # Also push to firmware so it persists on device (survives HA being down)
     ip = entry_data["ip_address"]
@@ -412,6 +589,8 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             "monitor_unsub",
             "monitor_state_unsub",
             "monitor_resume_unsub",
+            "claude_unsub",
+            "claude_state_unsub",
         ):
             unsub = entry_data.get(key)
             if unsub is not None:

@@ -111,7 +111,7 @@
     "step": {
       "init": {
         "title": "Mini Screen ESP32 Settings",
-        "description": "Update the IP address, configure the auto-dim schedule, or enable sensor monitoring.",
+        "description": "Update the IP address, configure the auto-dim schedule, or enable sensor monitoring / Claude usage mode.",
         "data": {
           "ip_address": "IP Address",
           "dim_enabled": "Enable auto-dim schedule",
@@ -120,7 +120,9 @@
           "dim_level": "Dim brightness (0–255)",
           "dim_restore_level": "Restore brightness (0–255)",
           "monitor_enabled": "Enable sensor monitoring",
-          "monitor_interval": "Rotation interval (seconds)"
+          "monitor_interval": "Rotation interval (seconds)",
+          "claude_enabled": "Enable Claude usage mode",
+          "claude_rotate": "Claude rotation interval (seconds)"
         },
         "data_description": {
           "ip_address": "The local IP address of the ESP device (e.g. 192.168.1.50).",
@@ -129,7 +131,9 @@
           "dim_level": "Brightness level during the dim period.",
           "dim_restore_level": "Brightness level to restore after the dim period.",
           "monitor_enabled": "Cycle through monitored sensors when any threshold is exceeded. Add sensors using the + button on the device page.",
-          "monitor_interval": "How long each sensor is shown before rotating to the next (1–300 s)."
+          "monitor_interval": "How long each sensor is shown before rotating to the next (1–300 s).",
+          "claude_enabled": "Show Claude session/weekly usage from the hass-claude-usage integration as progress bars. Takes over the display (and overrides sensor monitoring) while enabled.",
+          "claude_rotate": "How long each Claude frame is shown before rotating (1–300 s)."
         }
       }
     },

@@ -4,9 +4,11 @@ from __future__ import annotations
 from typing import Any
 
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.device_registry import DeviceInfo
+from homeassistant.util import dt as dt_util
 
-from .const import DOMAIN
+from .const import CLAUDE_DOMAIN, CLAUDE_KEYS, DOMAIN
 
 
 def device_info(entry_id: str, name: str) -> DeviceInfo:
@@ -91,3 +93,68 @@ def build_progress_params(
     if crit_pct > 0:
         params["crit"] = crit_pct
     return params
+
+
+# ── Claude usage mode helpers ─────────────────────────────────────────────────
+
+def parse_float(state_value: Any) -> float | None:
+    """Parse a sensor state into a float, or None if not numeric."""
+    try:
+        return float(state_value)
+    except (TypeError, ValueError):
+        return None
+
+
+def is_truthy_state(state_value: Any) -> bool:
+    """Return True for the various ways an 'on' / enabled state is rendered."""
+    return str(state_value).strip().lower() in {"true", "on", "1", "yes", "enabled"}
+
+
+def find_claude_entities(hass: HomeAssistant) -> dict[str, str]:
+    """
+    Locate the hass-claude-usage sensors via the entity registry.
+
+    Returns a dict mapping each known sensor key (see CLAUDE_KEYS) to its
+    current entity_id. Matching is done on the unique_id suffix
+    ("{config_entry_id}_{key}"), so it survives the user renaming entities.
+    """
+    registry = er.async_get(hass)
+    found: dict[str, str] = {}
+    for ent in registry.entities.values():
+        if ent.platform != CLAUDE_DOMAIN:
+            continue
+        uid = ent.unique_id or ""
+        ce = ent.config_entry_id or ""
+        key = uid[len(ce) + 1:] if ce and uid.startswith(ce + "_") else uid
+        if key in CLAUDE_KEYS:
+            found[key] = ent.entity_id
+    return found
+
+
+def format_reset_countdown(state_value: Any) -> str:
+    """
+    Format a timestamp sensor state as a compact coarse countdown.
+
+    Examples: "now", "38m", "3h05m", "2d4h". Returns "" if unparseable.
+    (Phase 1 shows minute granularity; second-by-second ticking is planned
+    for the dedicated firmware countdown in Phase 2.)
+    """
+    if not state_value or str(state_value).lower() in {"unknown", "unavailable", "none"}:
+        return ""
+    target = dt_util.parse_datetime(str(state_value))
+    if target is None:
+        return ""
+    now = dt_util.utcnow()
+    if target.tzinfo is None:
+        target = target.replace(tzinfo=now.tzinfo)
+    delta = (target - now).total_seconds()
+    if delta <= 0:
+        return "now"
+    minutes = int(delta // 60)
+    if minutes < 60:
+        return f"{max(1, minutes)}m"
+    hours, rem_m = divmod(minutes, 60)
+    if hours < 24:
+        return f"{hours}h{rem_m:02d}m"
+    days, rem_h = divmod(hours, 24)
+    return f"{days}d{rem_h}h"

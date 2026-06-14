@@ -19,7 +19,8 @@ from homeassistant.helpers.selector import (
 from .const import (
     CONF_IP_ADDRESS, CONF_NAME, DOMAIN,
     CONF_DIM_ENABLED, CONF_DIM_START, CONF_DIM_END, CONF_DIM_LEVEL, CONF_DIM_RESTORE,
-    CONF_MONITOR_ENABLED, CONF_MONITOR_INTERVAL, SUBENTRY_TYPE_MONITOR,
+    CONF_MONITOR_ENABLED, CONF_MONITOR_INTERVAL,
+    CONF_CLAUDE_ENABLED, CONF_CLAUDE_ROTATE, SUBENTRY_TYPE_MONITOR,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -136,6 +137,8 @@ class MiniScreenESP32OptionsFlow(OptionsFlow):
                     CONF_DIM_RESTORE:      user_input.get(CONF_DIM_RESTORE, 255),
                     CONF_MONITOR_ENABLED:  user_input.get(CONF_MONITOR_ENABLED, False),
                     CONF_MONITOR_INTERVAL: user_input.get(CONF_MONITOR_INTERVAL, 10),
+                    CONF_CLAUDE_ENABLED:   user_input.get(CONF_CLAUDE_ENABLED, False),
+                    CONF_CLAUDE_ROTATE:    user_input.get(CONF_CLAUDE_ROTATE, 6),
                 })
 
         schema = vol.Schema(
@@ -150,6 +153,9 @@ class MiniScreenESP32OptionsFlow(OptionsFlow):
                     vol.All(int, vol.Range(min=0, max=255)),
                 vol.Optional(CONF_MONITOR_ENABLED,  default=opts.get(CONF_MONITOR_ENABLED, False)): bool,
                 vol.Optional(CONF_MONITOR_INTERVAL, default=opts.get(CONF_MONITOR_INTERVAL, 10)):
+                    vol.All(int, vol.Range(min=1, max=300)),
+                vol.Optional(CONF_CLAUDE_ENABLED,   default=opts.get(CONF_CLAUDE_ENABLED, False)): bool,
+                vol.Optional(CONF_CLAUDE_ROTATE,    default=opts.get(CONF_CLAUDE_ROTATE, 6)):
                     vol.All(int, vol.Range(min=1, max=300)),
             }
         )
