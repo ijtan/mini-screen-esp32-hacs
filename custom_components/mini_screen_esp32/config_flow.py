@@ -20,7 +20,7 @@ from .const import (
     CONF_IP_ADDRESS, CONF_NAME, DOMAIN,
     CONF_DIM_ENABLED, CONF_DIM_START, CONF_DIM_END, CONF_DIM_LEVEL, CONF_DIM_RESTORE,
     CONF_MONITOR_ENABLED, CONF_MONITOR_INTERVAL,
-    CONF_CLAUDE_ENABLED, CONF_CLAUDE_ROTATE, CONF_CLAUDE_HOME_TIMEOUT, SUBENTRY_TYPE_MONITOR,
+    CONF_CLAUDE_ENABLED, CONF_CLAUDE_HOME_TIMEOUT, SUBENTRY_TYPE_MONITOR,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -138,7 +138,6 @@ class MiniScreenESP32OptionsFlow(OptionsFlow):
                     CONF_MONITOR_ENABLED:  user_input.get(CONF_MONITOR_ENABLED, False),
                     CONF_MONITOR_INTERVAL: user_input.get(CONF_MONITOR_INTERVAL, 10),
                     CONF_CLAUDE_ENABLED:      user_input.get(CONF_CLAUDE_ENABLED, False),
-                    CONF_CLAUDE_ROTATE:       user_input.get(CONF_CLAUDE_ROTATE, 6),
                     CONF_CLAUDE_HOME_TIMEOUT: user_input.get(CONF_CLAUDE_HOME_TIMEOUT, 0),
                 })
 
@@ -156,8 +155,6 @@ class MiniScreenESP32OptionsFlow(OptionsFlow):
                 vol.Optional(CONF_MONITOR_INTERVAL, default=opts.get(CONF_MONITOR_INTERVAL, 10)):
                     vol.All(int, vol.Range(min=1, max=300)),
                 vol.Optional(CONF_CLAUDE_ENABLED,   default=opts.get(CONF_CLAUDE_ENABLED, False)): bool,
-                vol.Optional(CONF_CLAUDE_ROTATE,    default=opts.get(CONF_CLAUDE_ROTATE, 6)):
-                    vol.All(int, vol.Range(min=1, max=300)),
                 vol.Optional(CONF_CLAUDE_HOME_TIMEOUT, default=opts.get(CONF_CLAUDE_HOME_TIMEOUT, 0)):
                     vol.All(int, vol.Range(min=0, max=3600)),
             }

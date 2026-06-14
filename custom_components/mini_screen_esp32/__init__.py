@@ -21,8 +21,8 @@ from homeassistant.helpers.event import (
 )
 
 from .const import (
-    CLAUDE_REPUSH_HEARTBEAT, CLAUDE_WEEK_EVERY,
-    CONF_CLAUDE_ENABLED, CONF_CLAUDE_HOME_TIMEOUT, CONF_CLAUDE_ROTATE,
+    CLAUDE_REPUSH_HEARTBEAT,
+    CONF_CLAUDE_ENABLED, CONF_CLAUDE_HOME_TIMEOUT,
     CONF_DIM_ENABLED, CONF_DIM_END, CONF_DIM_LEVEL, CONF_DIM_RESTORE, CONF_DIM_START,
     CONF_IP_ADDRESS, CONF_MONITOR_ENABLED, CONF_MONITOR_INTERVAL, CONF_NAME,
     DOMAIN, SUBENTRY_TYPE_MONITOR,
@@ -338,23 +338,6 @@ def _apply_monitor(
     _LOGGER.debug("Mini Screen ESP32 monitor started for %s (%ds interval)", ip, interval)
 
 
-def _claude_frame_params(pct: float, title: str, subtitle: str, crit: bool) -> dict[str, Any]:
-    """Build /showProgress params for one Claude usage frame.
-
-    The percentage + reset countdown go in the big top title (``label``); the
-    metric name goes in the small line below the bar (``value_text``).
-    """
-    bar = max(0, min(100, int(round(pct))))
-    return build_progress_params(
-        pct=bar,
-        label=title,
-        value_text=subtitle,
-        auto_clear_delay=0,
-        value_font_size=1,
-        crit_pct=100 if crit else 0,
-    )
-
-
 def _apply_claude(
     hass: HomeAssistant,
     entry: ConfigEntry,
@@ -362,13 +345,11 @@ def _apply_claude(
 ) -> None:
     """Set up (or restart) the Claude usage display loop for one entry.
 
-    Rotation rules:
-      • Session = 0 %        → show only the Week frame.
-      • Session > 0 %        → show Session primarily; Week once every
-                               CLAUDE_WEEK_EVERY rotations.
-      • Session/Week ≥ 100 % → show the maxed bar (blinking) and, if extra
-                               usage is enabled with credits started, rotate
-                               in an Extra Usage frame (credits / limit).
+    Shows session + week usage as thin stacked bars via /showBars, with a header
+    of live reset countdowns. When a limit is hit (≥100 %) the maxed bar is
+    labelled "FULL" and, if extra usage is enabled with credits started, an Extra
+    Usage (credits/limit) bar is added — so you can see which limit is used up
+    and how much overflow is being burned.
     """
     # Cancel any existing Claude timer/listener
     for key in ("claude_unsub", "claude_state_unsub"):
@@ -385,9 +366,7 @@ def _apply_claude(
         entry_data["claude_had_active"] = False
         return
 
-    rotate = max(1, int(opts.get(CONF_CLAUDE_ROTATE, 6)))
     ip: str = entry_data["ip_address"]
-    entry_data["claude_seconds"] = 0
     entry_data["claude_last_params"] = None
 
     @callback
@@ -434,70 +413,56 @@ def _apply_claude(
             return
         entry_data["claude_had_active"] = True
 
-        # Frame index advances every `rotate` seconds (1 s base tick below)
-        idx = entry_data.get("claude_seconds", 0) // rotate
+        s_full = session_pct is not None and session_pct >= 100
+        w_full = week_pct is not None and week_pct >= 100
 
-        s_pct = session_pct or 0.0
-        w_pct = week_pct or 0.0
+        # Extra usage surfaces only once a limit is hit and overflow has started.
+        extra_enabled = (
+            is_truthy_state(states["extra_usage_enabled"].state)
+            if states.get("extra_usage_enabled") else False
+        )
+        credits = num("extra_usage_credits") or 0.0
+        limit = num("extra_usage_limit")
+        extra_pct = num("extra_usage_percent")
+        show_extra = (s_full or w_full) and extra_enabled and credits > 0
 
-        def _join(pct: float, cd: str) -> str:
-            txt = f"{pct:.0f}%"
-            return f"{txt}  {cd}" if cd else txt
-
-        def session_frame(crit: bool = False) -> dict[str, Any]:
-            return _claude_frame_params(
-                s_pct, _join(s_pct, countdown("session_reset_time")), "Claude Session", crit
+        # Build up to 3 bars: (label, pct, value_text). Empty text → firmware "N%".
+        bars: list[tuple[str, float, str]] = []
+        if session_pct is not None:
+            bars.append(("Session FULL" if s_full else "Session", session_pct, ""))
+        if week_pct is not None:
+            bars.append(("Week FULL" if w_full else "Week", week_pct, ""))
+        if show_extra:
+            bar_pct = extra_pct if extra_pct is not None else (
+                (credits / limit * 100.0) if limit else 0.0
             )
+            lim_txt = f"/{limit:.0f}" if limit is not None else ""
+            bars.append(("Extra", bar_pct, f"{credits:.0f}{lim_txt}cr"))
+        bars = bars[:3]
 
-        def week_frame(crit: bool = False) -> dict[str, Any]:
-            return _claude_frame_params(
-                w_pct, _join(w_pct, countdown("week_reset_time")), "Claude Weekly Usage", crit
-            )
+        # Header: live reset countdowns — only when there's room (≤ 2 bars).
+        header = ""
+        if len(bars) <= 2:
+            parts = []
+            s_cd = countdown("session_reset_time")
+            w_cd = countdown("week_reset_time")
+            if session_pct is not None and s_cd:
+                parts.append(f"S {s_cd}")
+            if week_pct is not None and w_cd:
+                parts.append(f"W {w_cd}")
+            header = "  ".join(parts)
 
-        # Maxed-out override
-        maxed: list[str] = []
-        if session_pct is not None and s_pct >= 100:
-            maxed.append("session")
-        if week_pct is not None and w_pct >= 100:
-            maxed.append("week")
+        params: dict[str, Any] = {}
+        if header:
+            params["header"] = header
+        for i, (label, pct, text) in enumerate(bars):
+            params[f"l{i}"] = label
+            params[f"p{i}"] = max(0, min(100, int(round(pct))))
+            if text:
+                params[f"t{i}"] = text
 
-        if maxed:
-            extra_enabled = (
-                is_truthy_state(states["extra_usage_enabled"].state)
-                if states.get("extra_usage_enabled")
-                else False
-            )
-            credits = num("extra_usage_credits") or 0.0
-            limit = num("extra_usage_limit")
-            extra_pct = num("extra_usage_percent")
-
-            rotation: list[Any] = [
-                (lambda: session_frame(crit=True)) if m == "session"
-                else (lambda: week_frame(crit=True))
-                for m in maxed
-            ]
-            if extra_enabled and credits > 0:
-                bar = extra_pct if extra_pct is not None else (
-                    (credits / limit * 100.0) if limit else 0.0
-                )
-                lim_txt = f"/{limit:.0f}" if limit is not None else ""
-                rotation.append(
-                    lambda b=bar, t=f"{credits:.1f}{lim_txt}cr": _claude_frame_params(
-                        b, t, "Claude Extra", crit=False
-                    )
-                )
-            params = rotation[idx % len(rotation)]()
-        elif session_pct is None or s_pct <= 0:
-            # Session inactive → Week only
-            params = week_frame()
-        else:
-            # Session active → primary; Week every CLAUDE_WEEK_EVERY rotations
-            show_week = (idx % CLAUDE_WEEK_EVERY) == (CLAUDE_WEEK_EVERY - 1)
-            params = week_frame() if show_week else session_frame()
-
-        # Dedupe: skip the device call when the rendered frame is unchanged and
-        # we still own the display — but force a re-push every heartbeat so a
-        # power-cycled / desynced device recovers instead of sitting on the clock.
+        # Dedupe, but force a re-push every heartbeat so a power-cycled / desynced
+        # device recovers instead of sitting on the clock.
         now_mono = time.monotonic()
         unchanged = (
             params == entry_data.get("claude_last_params")
@@ -509,20 +474,18 @@ def _apply_claude(
         entry_data["claude_last_params"] = params
         entry_data["claude_last_push"] = now_mono
         _set_display_owner(entry_data, "claude")
-        hass.async_create_task(_call_device(ip=ip, path="/showProgress", params=params))
+        hass.async_create_task(_call_device(ip=ip, path="/showBars", params=params))
 
     @callback
     def _claude_tick(_now: Any) -> None:
-        entry_data["claude_seconds"] = entry_data.get("claude_seconds", 0) + 1
         # Never let one bad tick raise out and cancel the interval timer.
         try:
             _refresh_claude()
         except Exception:  # noqa: BLE001
             _LOGGER.exception("Mini Screen ESP32: Claude refresh tick failed")
 
-    # 1-second base tick so the sub-hour countdown can show ticking seconds.
-    # The frame rotates every `rotate` seconds and pushes are deduped, so the
-    # device is only contacted when the on-screen text actually changes.
+    # 1-second tick so the reset countdown in the header ticks live; pushes are
+    # deduped so the device is only contacted when the on-screen text changes.
     entry_data["claude_unsub"] = async_track_time_interval(
         hass, _claude_tick, timedelta(seconds=1)
     )
@@ -539,7 +502,7 @@ def _apply_claude(
             hass, claude_entity_ids, _on_claude_state
         )
     _refresh_claude()
-    _LOGGER.debug("Mini Screen ESP32 Claude mode started for %s (%ds rotation)", ip, rotate)
+    _LOGGER.debug("Mini Screen ESP32 Claude mode started for %s", ip)
 
 
 async def async_setup(hass: HomeAssistant, config: dict) -> bool:
@@ -573,7 +536,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         "auto_paused_since": None,
         "claude_unsub": None,
         "claude_state_unsub": None,
-        "claude_seconds": 0,
         "claude_last_params": None,
         "claude_last_push": 0.0,
         "claude_had_active": False,
