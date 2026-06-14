@@ -426,38 +426,34 @@ def _apply_claude(
         extra_pct = num("extra_usage_percent")
         show_extra = (s_full or w_full) and extra_enabled and credits > 0
 
-        # Build up to 3 bars: (label, pct, value_text). Empty text → firmware "N%".
-        bars: list[tuple[str, float, str]] = []
+        # Build up to 3 bars: (label, pct, sub, value_text).
+        #   sub        → right-of-title text (live reset countdown / credits)
+        #   value_text → shown with the bar; empty → firmware renders "N%"
+        bars: list[tuple[str, float, str, str]] = []
         if session_pct is not None:
-            bars.append(("Session FULL" if s_full else "Session", session_pct, ""))
+            bars.append((
+                "Session FULL" if s_full else "Session",
+                session_pct, countdown("session_reset_time"), "",
+            ))
         if week_pct is not None:
-            bars.append(("Week FULL" if w_full else "Week", week_pct, ""))
+            bars.append((
+                "Week FULL" if w_full else "Week",
+                week_pct, countdown("week_reset_time"), "",
+            ))
         if show_extra:
             bar_pct = extra_pct if extra_pct is not None else (
                 (credits / limit * 100.0) if limit else 0.0
             )
             lim_txt = f"/{limit:.0f}" if limit is not None else ""
-            bars.append(("Extra", bar_pct, f"{credits:.0f}{lim_txt}cr"))
+            bars.append(("Extra", bar_pct, f"{credits:.0f}{lim_txt}cr", ""))
         bars = bars[:3]
 
-        # Header: live reset countdowns — only when there's room (≤ 2 bars).
-        header = ""
-        if len(bars) <= 2:
-            parts = []
-            s_cd = countdown("session_reset_time")
-            w_cd = countdown("week_reset_time")
-            if session_pct is not None and s_cd:
-                parts.append(f"S {s_cd}")
-            if week_pct is not None and w_cd:
-                parts.append(f"W {w_cd}")
-            header = "  ".join(parts)
-
         params: dict[str, Any] = {}
-        if header:
-            params["header"] = header
-        for i, (label, pct, text) in enumerate(bars):
+        for i, (label, pct, sub, text) in enumerate(bars):
             params[f"l{i}"] = label
             params[f"p{i}"] = max(0, min(100, int(round(pct))))
+            if sub:
+                params[f"s{i}"] = sub
             if text:
                 params[f"t{i}"] = text
 
