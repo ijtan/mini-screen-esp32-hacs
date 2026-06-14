@@ -12,6 +12,7 @@ import aiohttp
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import Event, HomeAssistant, ServiceCall, callback
 from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.event import (
     async_call_later,
     async_track_state_change_event,
@@ -34,6 +35,10 @@ from .helpers import (
 _LOGGER = logging.getLogger(__name__)
 
 PLATFORMS = ["notify", "button", "switch"]
+
+# HA-managed shared aiohttp session, cached in async_setup so the many
+# fire-and-forget device calls reuse one session instead of creating one each.
+_CLIENTSESSION: aiohttp.ClientSession | None = None
 
 # Style -> endpoint mapping
 STYLE_ENDPOINTS: dict[str, str] = {
@@ -394,7 +399,7 @@ def _apply_claude(
                 return
             # Sticky takeover (pin / scroll / image): hold until the home timeout
             # elapses, then reclaim the screen for the Claude home display.
-            home_timeout = float(entry.options.get(CONF_CLAUDE_HOME_TIMEOUT, 60))
+            home_timeout = float(entry.options.get(CONF_CLAUDE_HOME_TIMEOUT, 0))
             since = entry_data.get("auto_paused_since")
             if home_timeout <= 0 or since is None or (time.monotonic() - since) < home_timeout:
                 return
@@ -539,6 +544,8 @@ def _apply_claude(
 
 async def async_setup(hass: HomeAssistant, config: dict) -> bool:
     """Set up the Mini Screen ESP32 component."""
+    global _CLIENTSESSION
+    _CLIENTSESSION = async_get_clientsession(hass)
     hass.data.setdefault(DOMAIN, {})
     return True
 
@@ -1174,19 +1181,20 @@ def _register_services(hass: HomeAssistant) -> None:
         for entry_data in entries:
             _set_auto_paused(hass, entry_data, True)
             _set_display_owner(entry_data, "send_image")
+            session = async_get_clientsession(hass)
             async def _post(ip: str = entry_data["ip_address"]) -> None:
                 try:
-                    async with aiohttp.ClientSession(timeout=timeout) as session:
-                        async with session.post(
-                            f"http://{ip}/drawBitmap",
-                            data=bitmap_bytes,
-                            headers={"Content-Type": "application/octet-stream"},
-                        ) as response:
-                            if response.status >= 400:
-                                _LOGGER.warning(
-                                    "Mini Screen ESP32 at %s returned HTTP %s for /drawBitmap",
-                                    ip, response.status,
-                                )
+                    async with session.post(
+                        f"http://{ip}/drawBitmap",
+                        data=bitmap_bytes,
+                        headers={"Content-Type": "application/octet-stream"},
+                        timeout=timeout,
+                    ) as response:
+                        if response.status >= 400:
+                            _LOGGER.warning(
+                                "Mini Screen ESP32 at %s returned HTTP %s for /drawBitmap",
+                                ip, response.status,
+                            )
                 except aiohttp.ClientError as err:
                     _LOGGER.warning("Cannot connect to Mini Screen ESP32 at %s: %s", ip, err)
             hass.async_create_task(_post())
@@ -1270,20 +1278,23 @@ async def _call_device(
     """Make a GET request to the device at the given path with optional params."""
     url = f"http://{ip}{path}"
     timeout = aiohttp.ClientTimeout(total=15)
+    session = _CLIENTSESSION or aiohttp.ClientSession()
     try:
-        async with aiohttp.ClientSession(timeout=timeout) as session:
-            async with session.get(url, params=params or {}) as response:
-                if response.status >= 400:
-                    _LOGGER.warning(
-                        "Mini Screen ESP32 at %s returned HTTP %s for %s",
-                        ip,
-                        response.status,
-                        path,
-                    )
+        async with session.get(url, params=params or {}, timeout=timeout) as response:
+            if response.status >= 400:
+                _LOGGER.warning(
+                    "Mini Screen ESP32 at %s returned HTTP %s for %s",
+                    ip,
+                    response.status,
+                    path,
+                )
     except asyncio.CancelledError:
         _LOGGER.debug("Request to Mini Screen ESP32 at %s was cancelled", ip)
     except aiohttp.ClientError as err:
         _LOGGER.warning("Cannot connect to Mini Screen ESP32 at %s: %s", ip, err)
+    finally:
+        if _CLIENTSESSION is None:
+            await session.close()
 
 
 # ---------------------------------------------------------------------------

@@ -1,4 +1,10 @@
-"""Mini Screen ESP32 device actions for the HA automation editor."""
+"""Mini Screen ESP32 device actions for the HA automation editor.
+
+Each device action simply builds the data for, and delegates to, the matching
+domain service registered in ``__init__.py``. This keeps a single source of
+truth for behaviour (display-ownership / pause handling, templating, etc.) so
+the automation-editor path and the service path can never drift apart.
+"""
 from __future__ import annotations
 
 import logging
@@ -6,21 +12,13 @@ from typing import Any
 
 import voluptuous as vol
 
-_LOGGER = logging.getLogger(__name__)
-
 from homeassistant.const import CONF_DEVICE_ID, CONF_DOMAIN, CONF_TYPE
-from homeassistant.core import Context, Event, HomeAssistant, callback
+from homeassistant.core import Context, HomeAssistant
 from homeassistant.helpers import device_registry as dr
-from homeassistant.helpers.event import async_track_state_change_event
 
-from . import STYLE_ENDPOINTS, _build_send_params, _call_device
 from .const import DOMAIN
-from .helpers import (
-    build_progress_params,
-    render_value_text,
-    state_to_percent,
-    threshold_to_pct,
-)
+
+_LOGGER = logging.getLogger(__name__)
 
 # ── Action type constants ─────────────────────────────────────────────────────
 ACTION_SEND_NORMAL      = "send_normal"
@@ -167,8 +165,6 @@ async def async_get_action_capabilities(
         fields[vol.Optional("unit", default="")] = str
         fields[vol.Optional("auto_clear_delay", default=0)] = vol.All(int, vol.Range(min=0, max=300))
         fields[vol.Optional("value_font_size", default=1)] = vol.All(int, vol.Range(min=1, max=2))
-        fields[vol.Optional("warn_enabled", default=False)] = bool
-        fields[vol.Optional("warn_threshold", default=80)] = vol.Coerce(float)
         fields[vol.Optional("crit_threshold", default=0)] = vol.Coerce(float)
 
     elif action_type == ACTION_PIN_SENSOR:
@@ -191,269 +187,88 @@ async def async_call_action_from_config(
     variables: dict[str, Any],
     context: Context | None,
 ) -> None:
-    """Execute a device action."""
+    """Execute a device action by delegating to the matching domain service."""
     entry_data = _get_entry_data_for_device(hass, config[CONF_DEVICE_ID])
     if entry_data is None:
         return
 
-    ip: str = entry_data["ip_address"]
     action_type: str = config[CONF_TYPE]
+    # Target this device specifically; services match on the device name.
+    data: dict[str, Any] = {"device_name": entry_data["name"]}
 
-    # ── No-extra-field actions ────────────────────────────────────────────────
-    if action_type == ACTION_FLASH:
-        hass.async_create_task(_call_device(ip=ip, path="/flashScreenBright5"))
-        return
-
-    if action_type == ACTION_CLEAR:
-        hass.async_create_task(_call_device(ip=ip, path="/clear"))
-        return
-
-    if action_type == ACTION_UNPIN:
-        hass.async_create_task(_call_device(ip=ip, path="/unpin"))
-        return
-
-    # ── Send-message family ───────────────────────────────────────────────────
     if action_type in _STYLE_MAP:
-        style = _STYLE_MAP[action_type]
-        params = _build_send_params(
-            message=config.get("message", ""),
-            style=style,
-            font_size=config.get("font_size", 2),
-            duration=config.get("duration", 5),
-            show=config.get("show", True),
-        )
-        hass.async_create_task(
-            _call_device(ip=ip, path=STYLE_ENDPOINTS.get(style, "/update"), params=params)
-        )
-        return
-
-    # ── New actions ───────────────────────────────────────────────────────────
-    if action_type == ACTION_SET_BRIGHTNESS:
-        hass.async_create_task(
-            _call_device(
-                ip=ip,
-                path="/setBrightness",
-                params={"level": config.get("level", 128)},
-            )
-        )
-        return
-
-    if action_type == ACTION_PIN_MESSAGE:
-        hass.async_create_task(
-            _call_device(
-                ip=ip,
-                path="/pin",
-                params={
-                    "message": config.get("message", ""),
-                    "font_size": config.get("font_size", 2),
-                },
-            )
-        )
-        return
-
-    if action_type == ACTION_SCROLL_MESSAGE:
-        hass.async_create_task(
-            _call_device(
-                ip=ip,
-                path="/scroll",
-                params={
-                    "message": config.get("message", ""),
-                    "font_size": config.get("font_size", 2),
-                },
-            )
-        )
-        return
-
-    if action_type == ACTION_SHOW_PROGRESS:
-        params: dict = {
-            "value": config.get("value", 0),
-            "label": config.get("label", ""),
-        }
-        acd = int(config.get("auto_clear_delay", 0))
-        if acd > 0:
-            params["auto_clear_delay"] = acd
-        vfs = int(config.get("value_font_size", 1))
-        if vfs == 2:
-            params["value_font_size"] = 2
-        crit = max(0, min(100, int(config.get("crit_threshold", 0))))
-        if crit > 0:
-            params["crit"] = crit
-        hass.async_create_task(_call_device(ip=ip, path="/showProgress", params=params))
-        return
-
-    if action_type == ACTION_PIN_SENSOR_PROGRESS:
-        from homeassistant.helpers.template import Template
-
-        entity_id: str = config.get("entity_id", "")
-        min_value: float = float(config.get("min_value", 0))
-        max_value: float = float(config.get("max_value", 100))
-        raw_label: str = config.get("label", entity_id.split(".")[-1].replace("_", " ").title())
-        raw_value_text: str = config.get("value_text", "")
-        unit: str = config.get("unit", "").strip()
-        value_type: str = config.get("value_type", "percentage")
-        auto_clear_delay: int = int(config.get("auto_clear_delay", 0))
-        value_font_size: int = int(config.get("value_font_size", 1))
-        crit_threshold_raw: float = float(config.get("crit_threshold", 0))
-        crit_pct = threshold_to_pct(
-            crit_threshold_raw, value_type, min_value, max_value
-        )
-
-        def _make_params(raw_sensor: str) -> dict[str, Any]:
-            label = (
-                Template(raw_label, hass).async_render(parse_result=False)
-                if raw_label
-                else ""
-            )
-            value_text = render_value_text(
-                hass,
-                raw_sensor,
-                entity_id,
-                value_type,
-                unit,
-                raw_value_text,
-            )
-            return build_progress_params(
-                pct=state_to_percent(raw_sensor, min_value, max_value),
-                label=label,
-                value_text=value_text,
-                auto_clear_delay=auto_clear_delay,
-                value_font_size=value_font_size,
-                crit_pct=crit_pct,
-            )
-
-        # Cancel existing subscription
-        existing_unsub = entry_data.get("sensor_unsub")
-        if existing_unsub is not None:
-            existing_unsub()
-            entry_data["sensor_unsub"] = None
-
-        # Send current state immediately
-        current_state = hass.states.get(entity_id)
-        if current_state is not None:
-            hass.async_create_task(
-                _call_device(
-                    ip=ip,
-                    path="/showProgress",
-                    params=_make_params(current_state.state),
-                )
-            )
-
-        @callback
-        def _on_progress_change(event: Event, _entry_data: dict = entry_data) -> None:
-            new_state = event.data.get("new_state")
-            if new_state is None:
-                return
-            hass.async_create_task(
-                _call_device(
-                    ip=_entry_data["ip_address"],
-                    path="/showProgress",
-                    params=_make_params(new_state.state),
-                )
-            )
-
-        entry_data["sensor_unsub"] = async_track_state_change_event(
-            hass, [entity_id], _on_progress_change
-        )
-        return
-
-    if action_type == ACTION_PIN_SENSOR:
-        from homeassistant.helpers.template import Template
-
-        entity_id = config.get("entity_id", "")
-        template: str = config.get("template", "{{ value }}")
-        font_size: int = int(config.get("font_size", 2))
-
-        def _format_message(state_value: str) -> str:
-            return Template(template, hass).async_render(
-                variables={"value": state_value}, parse_result=False
-            )
-
-        # Cancel existing subscription
-        existing_unsub = entry_data.get("sensor_unsub")
-        if existing_unsub is not None:
-            existing_unsub()
-            entry_data["sensor_unsub"] = None
-
-        # Send current state immediately
-        current_state = hass.states.get(entity_id)
-        if current_state is not None:
-            hass.async_create_task(
-                _call_device(ip=ip, path="/pin",
-                             params={"message": _format_message(current_state.state),
-                                     "font_size": font_size})
-            )
-
-        @callback
-        def _on_sensor_change(event: Event, _entry_data: dict = entry_data) -> None:
-            new_state = event.data.get("new_state")
-            if new_state is None:
-                return
-            hass.async_create_task(
-                _call_device(ip=_entry_data["ip_address"], path="/pin",
-                             params={"message": _format_message(new_state.state),
-                                     "font_size": font_size})
-            )
-
-        entry_data["sensor_unsub"] = async_track_state_change_event(
-            hass, [entity_id], _on_sensor_change
-        )
-        return
-
-    if action_type == ACTION_UNPIN_SENSOR:
-        unsub = entry_data.get("sensor_unsub")
-        if unsub is not None:
-            unsub()
-            entry_data["sensor_unsub"] = None
-        hass.async_create_task(_call_device(ip=ip, path="/unpin"))
-        return
-
-    if action_type == ACTION_SEND_IMAGE:
-        image_url: str = config.get("image_url", "")
-        dither: bool = config.get("dither", True)
-        if not image_url:
+        service = "send_message"
+        data["message"] = config.get("message", "")
+        data["style"] = _STYLE_MAP[action_type]
+        if action_type == ACTION_SEND_UPDATEABLE:
+            data["font_size"] = config.get("font_size", 2)
+            data["duration"] = config.get("duration", 5)
+            data["show"] = config.get("show", True)
+    elif action_type == ACTION_FLASH:
+        service = "flash"
+    elif action_type == ACTION_CLEAR:
+        service = "clear"
+    elif action_type == ACTION_UNPIN:
+        service = "unpin"
+    elif action_type == ACTION_UNPIN_SENSOR:
+        service = "unpin_sensor"
+    elif action_type == ACTION_SET_BRIGHTNESS:
+        service = "set_brightness"
+        data["level"] = config.get("level", 128)
+    elif action_type == ACTION_PIN_MESSAGE:
+        service = "pin_message"
+        data["message"] = config.get("message", "")
+        data["font_size"] = config.get("font_size", 2)
+    elif action_type == ACTION_SCROLL_MESSAGE:
+        service = "scroll_message"
+        data["message"] = config.get("message", "")
+        data["font_size"] = config.get("font_size", 2)
+    elif action_type == ACTION_SHOW_PROGRESS:
+        service = "show_progress"
+        data["value"] = config.get("value", 0)
+        if config.get("label"):
+            data["label"] = config["label"]
+        if int(config.get("auto_clear_delay", 0)) > 0:
+            data["auto_clear_delay"] = int(config["auto_clear_delay"])
+        if int(config.get("value_font_size", 1)) == 2:
+            data["value_font_size"] = 2
+        if int(config.get("crit_threshold", 0)) > 0:
+            data["crit_threshold"] = int(config["crit_threshold"])
+    elif action_type == ACTION_PIN_SENSOR:
+        service = "pin_sensor"
+        data["entity_id"] = config.get("entity_id", "")
+        data["template"] = config.get("template", "{{ value }}")
+        data["font_size"] = config.get("font_size", 2)
+    elif action_type == ACTION_PIN_SENSOR_PROGRESS:
+        service = "pin_sensor_progress"
+        data["entity_id"] = config.get("entity_id", "")
+        data["min_value"] = float(config.get("min_value", 0))
+        data["max_value"] = float(config.get("max_value", 100))
+        if config.get("label"):
+            data["label"] = config["label"]
+        data["value_type"] = config.get("value_type", "percentage")
+        if config.get("unit"):
+            data["unit"] = config["unit"]
+        if config.get("value_text"):
+            data["value_text"] = config["value_text"]
+        if int(config.get("auto_clear_delay", 0)) > 0:
+            data["auto_clear_delay"] = int(config["auto_clear_delay"])
+        if int(config.get("value_font_size", 1)) == 2:
+            data["value_font_size"] = 2
+        if float(config.get("crit_threshold", 0)) != 0:
+            data["crit_threshold"] = float(config["crit_threshold"])
+    elif action_type == ACTION_SEND_IMAGE:
+        if not config.get("image_url"):
             return
-
-        async def _send_image_action() -> None:
-            import io
-            import urllib.request
-            from PIL import Image
-
-            def load_and_convert() -> bytes:
-                with urllib.request.urlopen(image_url, timeout=15) as resp:
-                    img = Image.open(io.BytesIO(resp.read())).convert("RGB")
-                img = img.resize((128, 64), Image.LANCZOS)
-                dither_mode = Image.Dither.FLOYDSTEINBERG if dither else Image.Dither.NONE
-                img = img.convert("1", dither=dither_mode)
-                raw = bytearray(1024)
-                for y in range(64):
-                    for x in range(128):
-                        pixel = img.getpixel((x, y))
-                        if pixel:
-                            byte_idx = (y * 128 + x) // 8
-                            bit_idx  = 7 - ((y * 128 + x) % 8)
-                            raw[byte_idx] |= (1 << bit_idx)
-                return bytes(raw)
-
-            try:
-                import aiohttp
-                bitmap_bytes = await hass.async_add_executor_job(load_and_convert)
-                timeout = aiohttp.ClientTimeout(total=15)
-                async with aiohttp.ClientSession(timeout=timeout) as session:
-                    async with session.post(
-                        f"http://{ip}/drawBitmap",
-                        data=bitmap_bytes,
-                        headers={"Content-Type": "application/octet-stream"},
-                    ) as response:
-                        if response.status >= 400:
-                            _LOGGER.warning(
-                                "Mini Screen ESP32 at %s returned HTTP %s for /drawBitmap",
-                                ip, response.status,
-                            )
-            except Exception as err:
-                _LOGGER.warning("send_image action failed for %s: %s", ip, err)
-
-        hass.async_create_task(_send_image_action())
+        service = "send_image"
+        data["image_url"] = config["image_url"]
+        data["dither"] = config.get("dither", True)
+    else:
         return
+
+    await hass.services.async_call(
+        DOMAIN, service, data, blocking=False, context=context
+    )
 
 
 def _get_entry_data_for_device(

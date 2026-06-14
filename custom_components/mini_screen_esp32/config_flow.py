@@ -139,7 +139,7 @@ class MiniScreenESP32OptionsFlow(OptionsFlow):
                     CONF_MONITOR_INTERVAL: user_input.get(CONF_MONITOR_INTERVAL, 10),
                     CONF_CLAUDE_ENABLED:      user_input.get(CONF_CLAUDE_ENABLED, False),
                     CONF_CLAUDE_ROTATE:       user_input.get(CONF_CLAUDE_ROTATE, 6),
-                    CONF_CLAUDE_HOME_TIMEOUT: user_input.get(CONF_CLAUDE_HOME_TIMEOUT, 60),
+                    CONF_CLAUDE_HOME_TIMEOUT: user_input.get(CONF_CLAUDE_HOME_TIMEOUT, 0),
                 })
 
         schema = vol.Schema(
@@ -158,7 +158,7 @@ class MiniScreenESP32OptionsFlow(OptionsFlow):
                 vol.Optional(CONF_CLAUDE_ENABLED,   default=opts.get(CONF_CLAUDE_ENABLED, False)): bool,
                 vol.Optional(CONF_CLAUDE_ROTATE,    default=opts.get(CONF_CLAUDE_ROTATE, 6)):
                     vol.All(int, vol.Range(min=1, max=300)),
-                vol.Optional(CONF_CLAUDE_HOME_TIMEOUT, default=opts.get(CONF_CLAUDE_HOME_TIMEOUT, 60)):
+                vol.Optional(CONF_CLAUDE_HOME_TIMEOUT, default=opts.get(CONF_CLAUDE_HOME_TIMEOUT, 0)):
                     vol.All(int, vol.Range(min=0, max=3600)),
             }
         )

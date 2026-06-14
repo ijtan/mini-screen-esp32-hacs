@@ -10,6 +10,7 @@ from homeassistant.components.button import ButtonEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
@@ -59,16 +60,16 @@ class _MiniScreenButton(ButtonEntity):
 
     async def _fire(self) -> None:
         timeout = aiohttp.ClientTimeout(total=5)
+        session = async_get_clientsession(self.hass)
         try:
-            async with aiohttp.ClientSession(timeout=timeout) as session:
-                async with session.get(
-                    f"http://{self._ip_address}{self._path}"
-                ) as response:
-                    if response.status >= 400:
-                        _LOGGER.warning(
-                            "Mini Screen ESP32 at %s returned HTTP %s for %s",
-                            self._ip_address, response.status, self._path,
-                        )
+            async with session.get(
+                f"http://{self._ip_address}{self._path}", timeout=timeout
+            ) as response:
+                if response.status >= 400:
+                    _LOGGER.warning(
+                        "Mini Screen ESP32 at %s returned HTTP %s for %s",
+                        self._ip_address, response.status, self._path,
+                    )
         except (aiohttp.ClientError, asyncio.TimeoutError):
             pass  # Expected on restart — device reboots before responding
         except Exception as err:  # noqa: BLE001

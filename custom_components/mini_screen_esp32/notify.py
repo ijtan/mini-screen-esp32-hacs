@@ -10,6 +10,7 @@ from homeassistant.components.notify import NotifyEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from . import STYLE_ENDPOINTS
@@ -71,16 +72,16 @@ class MiniScreenNotifyEntity(NotifyEntity):
             params["show"] = str(show).lower()
 
         timeout = aiohttp.ClientTimeout(total=15)
+        session = async_get_clientsession(self.hass)
         try:
-            async with aiohttp.ClientSession(timeout=timeout) as session:
-                async with session.get(url, params=params) as response:
-                    if response.status >= 400:
-                        _LOGGER.warning(
-                            "Mini Screen ESP32 at %s returned HTTP %s for %s",
-                            self._ip_address,
-                            response.status,
-                            endpoint,
-                        )
+            async with session.get(url, params=params, timeout=timeout) as response:
+                if response.status >= 400:
+                    _LOGGER.warning(
+                        "Mini Screen ESP32 at %s returned HTTP %s for %s",
+                        self._ip_address,
+                        response.status,
+                        endpoint,
+                    )
         except aiohttp.ClientError as err:
             raise HomeAssistantError(
                 f"Cannot connect to Mini Screen ESP32 at {self._ip_address}: {err}"

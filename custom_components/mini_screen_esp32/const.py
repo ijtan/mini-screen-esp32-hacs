@@ -19,8 +19,10 @@ CONF_MONITOR_INTERVAL = "monitor_interval"
 # Options keys — Claude usage mode
 CONF_CLAUDE_ENABLED      = "claude_enabled"
 CONF_CLAUDE_ROTATE       = "claude_rotate"
-# Seconds a sticky takeover (pin/scroll/image) holds before the screen returns
-# to the Claude "home" display. 0 disables auto-return (sticky stays forever).
+# Optional: seconds a sticky takeover (pin/scroll/image) holds before the screen
+# returns to the Claude "home" display. Default 0 = off, i.e. pins stay until
+# explicitly cleared/unpinned (the monitor→Claude return is handled separately
+# by the display precedence, not this timeout).
 CONF_CLAUDE_HOME_TIMEOUT = "claude_home_timeout"
 
 # Subentry type key

@@ -123,7 +123,7 @@
           "monitor_interval": "Rotation interval (seconds)",
           "claude_enabled": "Enable Claude usage mode",
           "claude_rotate": "Claude rotation interval (seconds)",
-          "claude_home_timeout": "Return-to-Claude timeout (seconds)"
+          "claude_home_timeout": "Pin auto-return timeout (seconds, 0 = off)"
         },
         "data_description": {
           "ip_address": "The local IP address of the ESP device (e.g. 192.168.1.50).",
@@ -135,7 +135,7 @@
           "monitor_interval": "How long each sensor is shown before rotating to the next (1–300 s).",
           "claude_enabled": "Show Claude session/weekly usage from the hass-claude-usage integration as progress bars. Takes over the display (and overrides sensor monitoring) while enabled.",
           "claude_rotate": "How long each Claude frame is shown before rotating (1–300 s).",
-          "claude_home_timeout": "Claude is the home screen: after a pinned message / scrolled text / image takes over, return to Claude automatically once this many seconds pass. Set to 0 to keep takeovers until manually cleared. Timed messages and the sensor monitor are unaffected."
+          "claude_home_timeout": "Optional auto-return: when Claude usage mode is on, return to the Claude display this many seconds after a pinned message / scrolled text / image takes over. Default 0 = off — pins stay until explicitly cleared or unpinned. Timed messages return on their own and the sensor monitor is unaffected."
         }
       }
     },
