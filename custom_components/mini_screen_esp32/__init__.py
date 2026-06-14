@@ -22,7 +22,7 @@ from homeassistant.helpers.event import (
 
 from .const import (
     CLAUDE_REPUSH_HEARTBEAT,
-    CONF_CLAUDE_ENABLED, CONF_CLAUDE_HOME_TIMEOUT,
+    CONF_CLAUDE_BAR_STYLE, CONF_CLAUDE_ENABLED, CONF_CLAUDE_HOME_TIMEOUT,
     CONF_DIM_ENABLED, CONF_DIM_END, CONF_DIM_LEVEL, CONF_DIM_RESTORE, CONF_DIM_START,
     CONF_IP_ADDRESS, CONF_MONITOR_ENABLED, CONF_MONITOR_INTERVAL, CONF_NAME,
     DOMAIN, SUBENTRY_TYPE_MONITOR,
@@ -448,7 +448,7 @@ def _apply_claude(
             bars.append(("Extra", bar_pct, f"{credits:.0f}{lim_txt}cr", ""))
         bars = bars[:3]
 
-        params: dict[str, Any] = {}
+        params: dict[str, Any] = {"vmode": opts.get(CONF_CLAUDE_BAR_STYLE, "inside")}
         for i, (label, pct, sub, text) in enumerate(bars):
             params[f"l{i}"] = label
             params[f"p{i}"] = max(0, min(100, int(round(pct))))

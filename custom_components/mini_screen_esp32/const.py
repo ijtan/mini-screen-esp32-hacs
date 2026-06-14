@@ -18,6 +18,8 @@ CONF_MONITOR_INTERVAL = "monitor_interval"
 
 # Options keys — Claude usage mode
 CONF_CLAUDE_ENABLED      = "claude_enabled"
+# Value (%) placement on the multi-bar view: "right" | "inside" | "below"
+CONF_CLAUDE_BAR_STYLE    = "claude_bar_style"
 # Optional: seconds a sticky takeover (pin/scroll/image) holds before the screen
 # returns to the Claude "home" display. Default 0 = off, i.e. pins stay until
 # explicitly cleared/unpinned (the monitor→Claude return is handled separately
