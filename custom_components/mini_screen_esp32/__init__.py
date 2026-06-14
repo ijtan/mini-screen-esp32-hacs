@@ -450,7 +450,7 @@ def _apply_claude(
         bars = bars[:3]
 
         params: dict[str, Any] = {"vmode": opts.get(CONF_CLAUDE_BAR_STYLE, "inside")}
-        label_size = opts.get(CONF_CLAUDE_LABEL_SIZE, "auto")
+        label_size = opts.get(CONF_CLAUDE_LABEL_SIZE, "13")
         if label_size != "auto":
             params["tfont"] = "-1" if label_size == "mixed" else label_size
         for i, (label, pct, sub, text) in enumerate(bars):
