@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from datetime import timedelta
 from typing import Any
 
@@ -20,7 +21,7 @@ from homeassistant.helpers.event import (
 
 from .const import (
     CLAUDE_WEEK_EVERY,
-    CONF_CLAUDE_ENABLED, CONF_CLAUDE_ROTATE,
+    CONF_CLAUDE_ENABLED, CONF_CLAUDE_HOME_TIMEOUT, CONF_CLAUDE_ROTATE,
     CONF_DIM_ENABLED, CONF_DIM_END, CONF_DIM_LEVEL, CONF_DIM_RESTORE, CONF_DIM_START,
     CONF_IP_ADDRESS, CONF_MONITOR_ENABLED, CONF_MONITOR_INTERVAL, CONF_NAME,
     DOMAIN, SUBENTRY_TYPE_MONITOR,
@@ -79,6 +80,18 @@ _ALL_SERVICES = [
 # the loops re-push whenever `display_owner` is no longer theirs (see the dedupe
 # guard in `_refresh_claude` / the owner checks in `_refresh_monitor`).
 
+def _hand_back_to_auto(entry_data: dict[str, Any]) -> None:
+    """Reset takeover bookkeeping so the auto-display reclaims on the next tick.
+
+    Drops the current owner, clears the monitor "showing" flag and the Claude
+    dedupe cache so whichever background source is highest-priority re-pushes
+    immediately instead of being deduped against stale params.
+    """
+    entry_data["display_owner"] = None
+    entry_data["monitor_showing"] = False
+    entry_data["claude_last_params"] = None
+
+
 def _cancel_auto_resume(entry_data: dict[str, Any]) -> None:
     """Cancel any pending automatic auto-display resume."""
     unsub = entry_data.get("auto_resume_unsub")
@@ -97,6 +110,8 @@ def _set_auto_paused(
     """Pause or resume the auto-display (monitor / Claude), optionally auto-resuming later."""
     _cancel_auto_resume(entry_data)
     entry_data["auto_paused"] = paused
+    if paused:
+        entry_data["auto_paused_since"] = time.monotonic()
 
     if not paused or resume_after is None or resume_after <= 0:
         return
@@ -105,20 +120,15 @@ def _set_auto_paused(
     def _resume(_now: Any) -> None:
         entry_data["auto_paused"] = False
         entry_data["auto_resume_unsub"] = None
+        _hand_back_to_auto(entry_data)
 
     entry_data["auto_resume_unsub"] = async_call_later(hass, resume_after, _resume)
 
 
 def _resume_auto_display(hass: HomeAssistant, entry_data: dict[str, Any]) -> None:
-    """Release any takeover and hand the screen back to the auto-display.
-
-    Unpauses, drops the current owner, and clears the Claude dedupe cache so the
-    next tick is guaranteed to re-push (rather than being deduped against stale
-    params left from before the takeover).
-    """
+    """Release any takeover and hand the screen back to the auto-display."""
     _set_auto_paused(hass, entry_data, False)
-    _set_display_owner(entry_data, None)
-    entry_data["claude_last_params"] = None
+    _hand_back_to_auto(entry_data)
 
 
 def _set_display_owner(entry_data: dict[str, Any], owner: str | None) -> None:
@@ -184,6 +194,20 @@ def _apply_dim_schedule(
     )
 
 
+def _release_monitor(
+    hass: HomeAssistant, entry: ConfigEntry, entry_data: dict[str, Any]
+) -> None:
+    """Monitor has nothing to show — hand the screen down to the next source.
+
+    Falls through to Claude home mode when it is enabled; otherwise blanks the
+    display (firmware returns to the clock).
+    """
+    was_showing = bool(entry_data.get("monitor_showing"))
+    _hand_back_to_auto(entry_data)
+    if was_showing and not entry.options.get(CONF_CLAUDE_ENABLED, False):
+        hass.async_create_task(_call_device(ip=entry_data["ip_address"], path="/unpin"))
+
+
 def _apply_monitor(
     hass: HomeAssistant,
     entry: ConfigEntry,
@@ -198,12 +222,8 @@ def _apply_monitor(
             entry_data[key] = None
 
     opts = entry.options
-    # Claude usage mode owns the auto-display when enabled — stand the monitor down.
-    if not opts.get(CONF_MONITOR_ENABLED, False) or opts.get(CONF_CLAUDE_ENABLED, False):
-        if entry_data.get("display_owner") == "monitor":
-            _set_display_owner(entry_data, None)
-            hass.async_create_task(_call_device(ip=entry_data["ip_address"], path="/unpin"))
-        entry_data["monitor_had_active"] = False
+    if not opts.get(CONF_MONITOR_ENABLED, False):
+        _release_monitor(hass, entry, entry_data)
         return
 
     interval = max(1, int(opts.get(CONF_MONITOR_INTERVAL, 10)))
@@ -223,10 +243,7 @@ def _apply_monitor(
             if s.subentry_type == SUBENTRY_TYPE_MONITOR
         ]
         if not sensors:
-            if entry_data.get("monitor_had_active") and entry_data.get("display_owner") == "monitor":
-                _set_display_owner(entry_data, None)
-                hass.async_create_task(_call_device(ip=ip, path="/unpin"))
-            entry_data["monitor_had_active"] = False
+            _release_monitor(hass, entry, entry_data)
             return
 
         active = []
@@ -248,13 +265,8 @@ def _apply_monitor(
                 active.append(cfg)
 
         if not active:
-            if entry_data.get("monitor_had_active") and entry_data.get("display_owner") == "monitor":
-                _set_display_owner(entry_data, None)
-                hass.async_create_task(_call_device(ip=ip, path="/unpin"))
-            entry_data["monitor_had_active"] = False
+            _release_monitor(hass, entry, entry_data)
             return
-
-        entry_data["monitor_had_active"] = True
 
         idx = entry_data.get("monitor_index", 0) % len(active)
         if advance_index:
@@ -288,6 +300,7 @@ def _apply_monitor(
             value_font_size=int(cfg.get("value_font_size", 1)),
             crit_pct=crit_pct,
         )
+        entry_data["monitor_showing"] = True
         _set_display_owner(entry_data, "monitor")
         hass.async_create_task(_call_device(ip=ip, path="/showProgress", params=params))
 
@@ -374,8 +387,20 @@ def _apply_claude(
 
     @callback
     def _refresh_claude() -> None:
-        # Honour the shared auto-display pause (messages / pins take over briefly)
+        # ── Precedence: manual takeover > monitor (active) > Claude home ──────
         if entry_data.get("auto_paused"):
+            # Transient takeover (message) returns via its own resume timer.
+            if entry_data.get("auto_resume_unsub") is not None:
+                return
+            # Sticky takeover (pin / scroll / image): hold until the home timeout
+            # elapses, then reclaim the screen for the Claude home display.
+            home_timeout = float(entry.options.get(CONF_CLAUDE_HOME_TIMEOUT, 60))
+            since = entry_data.get("auto_paused_since")
+            if home_timeout <= 0 or since is None or (time.monotonic() - since) < home_timeout:
+                return
+            _resume_auto_display(hass, entry_data)
+        # The sensor monitor outranks the home display while it is actively showing.
+        if entry_data.get("monitor_showing"):
             return
 
         # Re-resolve entities each tick so the integration loading later is picked up
@@ -523,8 +548,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         "monitor_state_unsub": None,
         "auto_resume_unsub": None,
         "monitor_index": 0,
-        "monitor_had_active": False,
+        "monitor_showing": False,
         "auto_paused": False,
+        "auto_paused_since": None,
         "claude_unsub": None,
         "claude_state_unsub": None,
         "claude_seconds": 0,

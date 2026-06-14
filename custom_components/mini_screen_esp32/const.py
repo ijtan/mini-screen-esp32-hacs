@@ -17,8 +17,11 @@ CONF_MONITOR_ENABLED  = "monitor_enabled"
 CONF_MONITOR_INTERVAL = "monitor_interval"
 
 # Options keys — Claude usage mode
-CONF_CLAUDE_ENABLED = "claude_enabled"
-CONF_CLAUDE_ROTATE  = "claude_rotate"
+CONF_CLAUDE_ENABLED      = "claude_enabled"
+CONF_CLAUDE_ROTATE       = "claude_rotate"
+# Seconds a sticky takeover (pin/scroll/image) holds before the screen returns
+# to the Claude "home" display. 0 disables auto-return (sticky stays forever).
+CONF_CLAUDE_HOME_TIMEOUT = "claude_home_timeout"
 
 # Subentry type key
 SUBENTRY_TYPE_MONITOR = "monitored_sensor"
