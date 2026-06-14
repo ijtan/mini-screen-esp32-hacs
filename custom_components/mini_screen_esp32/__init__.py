@@ -13,6 +13,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import Event, HomeAssistant, ServiceCall, callback
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.util import dt as dt_util
 from homeassistant.helpers.event import (
     async_call_later,
     async_track_state_change_event,
@@ -29,7 +30,7 @@ from .const import (
     DOMAIN, SUBENTRY_TYPE_MONITOR,
 )
 from .helpers import (
-    build_progress_params, find_claude_entities, format_reset_countdown,
+    build_progress_params, find_claude_entities,
     is_truthy_state, parse_float, render_value_text, state_to_percent, threshold_to_pct,
 )
 
@@ -397,10 +398,6 @@ def _apply_claude(
             s = states.get(key)
             return parse_float(s.state) if s else None
 
-        def countdown(key: str) -> str:
-            s = states.get(key)
-            return format_reset_countdown(s.state) if s else ""
-
         session_pct = num("session_usage_percent")
         week_pct = num("week_usage_percent")
 
@@ -427,36 +424,46 @@ def _apply_claude(
         extra_pct = num("extra_usage_percent")
         show_extra = (s_full or w_full) and extra_enabled and credits > 0
 
-        # Build up to 3 bars: (label, pct, sub, value_text).
-        #   sub        → right-of-title text (live reset countdown / credits)
-        #   value_text → shown with the bar; empty → firmware renders "N%"
-        bars: list[tuple[str, float, str, str]] = []
+        def reset_epoch(key: str) -> int | None:
+            s = states.get(key)
+            if not s:
+                return None
+            dt = dt_util.parse_datetime(s.state)
+            return int(dt.timestamp()) if dt else None
+
+        # Build up to 3 bars: (label, pct, sub, value_text, reset_epoch).
+        #   reset_epoch → UTC seconds; the device renders+ticks the countdown
+        #   sub         → static right-of-title text (used when no epoch)
+        #   value_text  → shown with the bar; empty → firmware renders "N%"
+        bars: list[tuple[str, float, str, str, int | None]] = []
         if session_pct is not None:
             bars.append((
                 "Session FULL" if s_full else "Session",
-                session_pct, countdown("session_reset_time"), "",
+                session_pct, "", "", reset_epoch("session_reset_time"),
             ))
         if week_pct is not None:
             bars.append((
                 "Week FULL" if w_full else "Week",
-                week_pct, countdown("week_reset_time"), "",
+                week_pct, "", "", reset_epoch("week_reset_time"),
             ))
         if show_extra:
             bar_pct = extra_pct if extra_pct is not None else (
                 (credits / limit * 100.0) if limit else 0.0
             )
             lim_txt = f"/{limit:.0f}" if limit is not None else ""
-            bars.append(("Extra", bar_pct, f"{credits:.0f}{lim_txt}cr", ""))
+            bars.append(("Extra", bar_pct, f"{credits:.0f}{lim_txt}cr", "", None))
         bars = bars[:3]
 
         params: dict[str, Any] = {"vmode": opts.get(CONF_CLAUDE_BAR_STYLE, "inside")}
         label_size = opts.get(CONF_CLAUDE_LABEL_SIZE, "13")
         if label_size != "auto":
             params["tfont"] = "-1" if label_size == "mixed" else label_size
-        for i, (label, pct, sub, text) in enumerate(bars):
+        for i, (label, pct, sub, text, epoch) in enumerate(bars):
             params[f"l{i}"] = label
             params[f"p{i}"] = max(0, min(100, int(round(pct))))
-            if sub:
+            if epoch:
+                params[f"e{i}"] = epoch          # device computes the countdown
+            elif sub:
                 params[f"s{i}"] = sub
             if text:
                 params[f"t{i}"] = text
