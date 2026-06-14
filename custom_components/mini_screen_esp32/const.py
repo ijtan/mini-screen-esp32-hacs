@@ -44,3 +44,8 @@ CLAUDE_KEYS = {
 # When the session is active (>0 %) show it primarily; show the Week frame
 # only once every N rotations.
 CLAUDE_WEEK_EVERY = 4
+
+# Force a re-push at least this often (seconds) even when the rendered frame is
+# unchanged, so a rebooted/desynced device recovers the Claude display instead
+# of sitting on the clock (the dedupe would otherwise keep skipping).
+CLAUDE_REPUSH_HEARTBEAT = 10

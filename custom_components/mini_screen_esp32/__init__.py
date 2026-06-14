@@ -20,7 +20,7 @@ from homeassistant.helpers.event import (
 )
 
 from .const import (
-    CLAUDE_WEEK_EVERY,
+    CLAUDE_REPUSH_HEARTBEAT, CLAUDE_WEEK_EVERY,
     CONF_CLAUDE_ENABLED, CONF_CLAUDE_HOME_TIMEOUT, CONF_CLAUDE_ROTATE,
     CONF_DIM_ENABLED, CONF_DIM_END, CONF_DIM_LEVEL, CONF_DIM_RESTORE, CONF_DIM_START,
     CONF_IP_ADDRESS, CONF_MONITOR_ENABLED, CONF_MONITOR_INTERVAL, CONF_NAME,
@@ -490,12 +490,19 @@ def _apply_claude(
             show_week = (idx % CLAUDE_WEEK_EVERY) == (CLAUDE_WEEK_EVERY - 1)
             params = week_frame() if show_week else session_frame()
 
-        # Dedupe: only hit the device when the rendered frame actually changed,
-        # or when we need to reclaim the display after another feature used it.
-        if params == entry_data.get("claude_last_params") and entry_data.get("display_owner") == "claude":
+        # Dedupe: skip the device call when the rendered frame is unchanged and
+        # we still own the display — but force a re-push every heartbeat so a
+        # power-cycled / desynced device recovers instead of sitting on the clock.
+        now_mono = time.monotonic()
+        unchanged = (
+            params == entry_data.get("claude_last_params")
+            and entry_data.get("display_owner") == "claude"
+        )
+        if unchanged and (now_mono - entry_data.get("claude_last_push", 0.0)) < CLAUDE_REPUSH_HEARTBEAT:
             return
         _LOGGER.debug("Mini Screen ESP32 Claude push: %s", params)
         entry_data["claude_last_params"] = params
+        entry_data["claude_last_push"] = now_mono
         _set_display_owner(entry_data, "claude")
         hass.async_create_task(_call_device(ip=ip, path="/showProgress", params=params))
 
@@ -561,6 +568,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         "claude_state_unsub": None,
         "claude_seconds": 0,
         "claude_last_params": None,
+        "claude_last_push": 0.0,
         "claude_had_active": False,
         "display_owner": None,
     }
