@@ -63,36 +63,62 @@ _ALL_SERVICES = [
 ]
 
 
-def _cancel_monitor_resume(entry_data: dict[str, Any]) -> None:
-    """Cancel any pending automatic monitor resume."""
-    unsub = entry_data.get("monitor_resume_unsub")
+# ── Auto-display arbitration ──────────────────────────────────────────────────
+# "Auto-display" = the always-on background modes that drive the screen on a
+# timer: the sensor monitor and Claude usage mode. Manual/notification features
+# temporarily take over by setting `auto_paused`. Two flavours of takeover:
+#
+#   • Transient  (send_message): pause with a `resume_after` timer — the
+#                 auto-display comes back on its own once it elapses.
+#   • Sticky     (pin_message, scroll_message, pin_sensor, pin_sensor_progress,
+#                 send_image): pause with no timer — stays until an explicit
+#                 release (clear / unpin / unpin_sensor) calls
+#                 `_resume_auto_display`.
+#
+# Reclaim after any takeover is automatic on the next auto-display tick because
+# the loops re-push whenever `display_owner` is no longer theirs (see the dedupe
+# guard in `_refresh_claude` / the owner checks in `_refresh_monitor`).
+
+def _cancel_auto_resume(entry_data: dict[str, Any]) -> None:
+    """Cancel any pending automatic auto-display resume."""
+    unsub = entry_data.get("auto_resume_unsub")
     if unsub is not None:
         unsub()
-        entry_data["monitor_resume_unsub"] = None
+        entry_data["auto_resume_unsub"] = None
 
 
-def _set_monitor_paused(
+def _set_auto_paused(
     hass: HomeAssistant,
     entry_data: dict[str, Any],
     paused: bool,
     *,
     resume_after: float | None = None,
 ) -> None:
-    """Pause or resume monitored sensor rotation, optionally auto-resuming later."""
-    _cancel_monitor_resume(entry_data)
-    entry_data["monitor_paused"] = paused
+    """Pause or resume the auto-display (monitor / Claude), optionally auto-resuming later."""
+    _cancel_auto_resume(entry_data)
+    entry_data["auto_paused"] = paused
 
     if not paused or resume_after is None or resume_after <= 0:
         return
 
     @callback
-    def _resume_monitor(_now: Any) -> None:
-        entry_data["monitor_paused"] = False
-        entry_data["monitor_resume_unsub"] = None
+    def _resume(_now: Any) -> None:
+        entry_data["auto_paused"] = False
+        entry_data["auto_resume_unsub"] = None
 
-    entry_data["monitor_resume_unsub"] = async_call_later(
-        hass, resume_after, _resume_monitor
-    )
+    entry_data["auto_resume_unsub"] = async_call_later(hass, resume_after, _resume)
+
+
+def _resume_auto_display(hass: HomeAssistant, entry_data: dict[str, Any]) -> None:
+    """Release any takeover and hand the screen back to the auto-display.
+
+    Unpauses, drops the current owner, and clears the Claude dedupe cache so the
+    next tick is guaranteed to re-push (rather than being deduped against stale
+    params left from before the takeover).
+    """
+    _set_auto_paused(hass, entry_data, False)
+    _set_display_owner(entry_data, None)
+    entry_data["claude_last_params"] = None
 
 
 def _set_display_owner(entry_data: dict[str, Any], owner: str | None) -> None:
@@ -187,7 +213,7 @@ def _apply_monitor(
 
     @callback
     def _refresh_monitor(*, advance_index: bool) -> None:
-        if entry_data.get("monitor_paused"):
+        if entry_data.get("auto_paused"):
             return
 
         # Re-read subentries each tick so additions/removals are picked up
@@ -349,7 +375,7 @@ def _apply_claude(
     @callback
     def _refresh_claude() -> None:
         # Honour the shared auto-display pause (messages / pins take over briefly)
-        if entry_data.get("monitor_paused"):
+        if entry_data.get("auto_paused"):
             return
 
         # Re-resolve entities each tick so the integration loading later is picked up
@@ -495,10 +521,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         "dim_unsub_end": None,
         "monitor_unsub": None,
         "monitor_state_unsub": None,
-        "monitor_resume_unsub": None,
+        "auto_resume_unsub": None,
         "monitor_index": 0,
         "monitor_had_active": False,
-        "monitor_paused": False,
+        "auto_paused": False,
         "claude_unsub": None,
         "claude_state_unsub": None,
         "claude_seconds": 0,
@@ -603,7 +629,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             "dim_unsub_end",
             "monitor_unsub",
             "monitor_state_unsub",
-            "monitor_resume_unsub",
+            "auto_resume_unsub",
             "claude_unsub",
             "claude_state_unsub",
         ):
@@ -651,7 +677,7 @@ def _register_services(hass: HomeAssistant) -> None:
             # Non-updateable styles take over the display — pause monitor
             if style != "updateable":
                 resume_after = duration if style in {"normal", "big", "inverted", "inverted_big"} else 5
-                _set_monitor_paused(hass, entry_data, True, resume_after=resume_after)
+                _set_auto_paused(hass, entry_data, True, resume_after=resume_after)
             _set_display_owner(entry_data, "send_message")
             hass.async_create_task(
                 _call_device(
@@ -700,8 +726,7 @@ def _register_services(hass: HomeAssistant) -> None:
             if unsub is not None:
                 unsub()
                 entry_data["sensor_unsub"] = None
-            _set_monitor_paused(hass, entry_data, False)
-            _set_display_owner(entry_data, None)
+            _resume_auto_display(hass, entry_data)
             hass.async_create_task(
                 _call_device(ip=entry_data["ip_address"], path="/clear")
             )
@@ -721,8 +746,7 @@ def _register_services(hass: HomeAssistant) -> None:
             return
 
         for entry_data in entries:
-            _set_monitor_paused(hass, entry_data, False)
-            _set_display_owner(entry_data, None)
+            _resume_auto_display(hass, entry_data)
             hass.async_create_task(
                 _call_device(ip=entry_data["ip_address"], path="/unpin")
             )
@@ -769,7 +793,7 @@ def _register_services(hass: HomeAssistant) -> None:
             return
 
         for entry_data in entries:
-            _set_monitor_paused(hass, entry_data, True)
+            _set_auto_paused(hass, entry_data, True)
             _set_display_owner(entry_data, "pin_message")
             hass.async_create_task(
                 _call_device(
@@ -797,7 +821,7 @@ def _register_services(hass: HomeAssistant) -> None:
             return
 
         for entry_data in entries:
-            _set_monitor_paused(hass, entry_data, True)
+            _set_auto_paused(hass, entry_data, True)
             _set_display_owner(entry_data, "scroll_message")
             hass.async_create_task(
                 _call_device(
@@ -898,7 +922,7 @@ def _register_services(hass: HomeAssistant) -> None:
             if existing_unsub is not None:
                 existing_unsub()
                 entry_data["sensor_unsub"] = None
-            _set_monitor_paused(hass, entry_data, True)
+            _set_auto_paused(hass, entry_data, True)
 
             # Send the current state immediately
             current_state = hass.states.get(entity_id)
@@ -998,7 +1022,7 @@ def _register_services(hass: HomeAssistant) -> None:
             if existing_unsub is not None:
                 existing_unsub()
                 entry_data["sensor_unsub"] = None
-            _set_monitor_paused(hass, entry_data, True)
+            _set_auto_paused(hass, entry_data, True)
 
             # Send current state immediately
             current_state = hass.states.get(entity_id)
@@ -1054,8 +1078,7 @@ def _register_services(hass: HomeAssistant) -> None:
             if unsub is not None:
                 unsub()
                 entry_data["sensor_unsub"] = None
-            _set_monitor_paused(hass, entry_data, False)
-            _set_display_owner(entry_data, None)
+            _resume_auto_display(hass, entry_data)
             hass.async_create_task(
                 _call_device(ip=entry_data["ip_address"], path="/unpin")
             )
@@ -1109,7 +1132,7 @@ def _register_services(hass: HomeAssistant) -> None:
 
         timeout = aiohttp.ClientTimeout(total=15)
         for entry_data in entries:
-            _set_monitor_paused(hass, entry_data, True)
+            _set_auto_paused(hass, entry_data, True)
             _set_display_owner(entry_data, "send_image")
             async def _post(ip: str = entry_data["ip_address"]) -> None:
                 try:
