@@ -20,7 +20,8 @@ from .const import (
     CONF_IP_ADDRESS, CONF_NAME, DOMAIN,
     CONF_DIM_ENABLED, CONF_DIM_START, CONF_DIM_END, CONF_DIM_LEVEL, CONF_DIM_RESTORE,
     CONF_MONITOR_ENABLED, CONF_MONITOR_INTERVAL,
-    CONF_CLAUDE_ENABLED, CONF_CLAUDE_BAR_STYLE, CONF_CLAUDE_HOME_TIMEOUT, SUBENTRY_TYPE_MONITOR,
+    CONF_CLAUDE_ENABLED, CONF_CLAUDE_BAR_STYLE, CONF_CLAUDE_LABEL_SIZE,
+    CONF_CLAUDE_HOME_TIMEOUT, SUBENTRY_TYPE_MONITOR,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -139,6 +140,7 @@ class MiniScreenESP32OptionsFlow(OptionsFlow):
                     CONF_MONITOR_INTERVAL: user_input.get(CONF_MONITOR_INTERVAL, 10),
                     CONF_CLAUDE_ENABLED:      user_input.get(CONF_CLAUDE_ENABLED, False),
                     CONF_CLAUDE_BAR_STYLE:    user_input.get(CONF_CLAUDE_BAR_STYLE, "inside"),
+                    CONF_CLAUDE_LABEL_SIZE:   user_input.get(CONF_CLAUDE_LABEL_SIZE, "auto"),
                     CONF_CLAUDE_HOME_TIMEOUT: user_input.get(CONF_CLAUDE_HOME_TIMEOUT, 0),
                 })
 
@@ -160,7 +162,14 @@ class MiniScreenESP32OptionsFlow(OptionsFlow):
                     SelectSelector(SelectSelectorConfig(options=[
                         SelectOptionDict(value="inside", label="Value inside the bar"),
                         SelectOptionDict(value="right",  label="Value right of the bar"),
-                        SelectOptionDict(value="below",  label="Value below the bar"),
+                        SelectOptionDict(value="title",  label="Value on the title line"),
+                    ])),
+                vol.Optional(CONF_CLAUDE_LABEL_SIZE, default=opts.get(CONF_CLAUDE_LABEL_SIZE, "auto")):
+                    SelectSelector(SelectSelectorConfig(options=[
+                        SelectOptionDict(value="auto",  label="Auto"),
+                        SelectOptionDict(value="16",    label="Large (16px)"),
+                        SelectOptionDict(value="10",    label="Small (10px)"),
+                        SelectOptionDict(value="mixed", label="Mixed (small label, large time)"),
                     ])),
                 vol.Optional(CONF_CLAUDE_HOME_TIMEOUT, default=opts.get(CONF_CLAUDE_HOME_TIMEOUT, 0)):
                     vol.All(int, vol.Range(min=0, max=3600)),

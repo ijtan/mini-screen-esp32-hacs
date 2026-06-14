@@ -123,6 +123,7 @@
           "monitor_interval": "Rotation interval (seconds)",
           "claude_enabled": "Enable Claude usage mode",
           "claude_bar_style": "Claude bar value placement",
+          "claude_label_size": "Claude label size",
           "claude_home_timeout": "Pin auto-return timeout (seconds, 0 = off)"
         },
         "data_description": {
@@ -134,7 +135,8 @@
           "monitor_enabled": "Cycle through monitored sensors when any threshold is exceeded. Add sensors using the + button on the device page.",
           "monitor_interval": "How long each sensor is shown before rotating to the next (1–300 s).",
           "claude_enabled": "Show Claude session/weekly usage from the hass-claude-usage integration as progress bars. Takes over the display (and overrides sensor monitoring) while enabled.",
-          "claude_bar_style": "Where to show the % on the Claude bars: inside the bar (auto-contrast), to the right, or below it.",
+          "claude_bar_style": "Where to show the % on the Claude bars: inside the bar (auto-contrast), to the right, or on the title line.",
+          "claude_label_size": "Font size for the Claude bar labels and reset times. 'Mixed' keeps the label small and the time large.",
           "claude_home_timeout": "Optional auto-return: when Claude usage mode is on, return to the Claude display this many seconds after a pinned message / scrolled text / image takes over. Default 0 = off — pins stay until explicitly cleared or unpinned. Timed messages return on their own and the sensor monitor is unaffected."
         }
       }
