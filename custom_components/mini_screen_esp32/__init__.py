@@ -401,6 +401,7 @@ def _apply_claude(
             _resume_auto_display(hass, entry_data)
         # The sensor monitor outranks the home display while it is actively showing.
         if entry_data.get("monitor_showing"):
+            _LOGGER.debug("Mini Screen ESP32 Claude: yielding to active monitor")
             return
 
         # Re-resolve entities each tick so the integration loading later is picked up
@@ -493,6 +494,7 @@ def _apply_claude(
         # or when we need to reclaim the display after another feature used it.
         if params == entry_data.get("claude_last_params") and entry_data.get("display_owner") == "claude":
             return
+        _LOGGER.debug("Mini Screen ESP32 Claude push: %s", params)
         entry_data["claude_last_params"] = params
         _set_display_owner(entry_data, "claude")
         hass.async_create_task(_call_device(ip=ip, path="/showProgress", params=params))
@@ -500,7 +502,11 @@ def _apply_claude(
     @callback
     def _claude_tick(_now: Any) -> None:
         entry_data["claude_seconds"] = entry_data.get("claude_seconds", 0) + 1
-        _refresh_claude()
+        # Never let one bad tick raise out and cancel the interval timer.
+        try:
+            _refresh_claude()
+        except Exception:  # noqa: BLE001
+            _LOGGER.exception("Mini Screen ESP32: Claude refresh tick failed")
 
     # 1-second base tick so the sub-hour countdown can show ticking seconds.
     # The frame rotates every `rotate` seconds and pushes are deduped, so the

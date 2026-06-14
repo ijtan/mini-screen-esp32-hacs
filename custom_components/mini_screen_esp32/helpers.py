@@ -135,6 +135,10 @@ def format_reset_countdown(state_value: Any) -> str:
     """
     Format a timestamp sensor state as a compact countdown.
 
+    The countdown is computed live from the absolute reset timestamp minus the
+    current time, so it ticks down between the integration's slow (~5 min)
+    sensor refreshes and reconciles whenever a new reset time arrives.
+
     Granularity adapts to how far away the reset is:
       • under 1 hour → "M:SS"  (e.g. "38:12", "0:45")   — seconds tick
       • under 1 day  → "3h05m"
